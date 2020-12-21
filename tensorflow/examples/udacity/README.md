@@ -1,12 +1,5 @@
-Assignments for Udacity Deep Learning class with TensorFlow
-===========================================================
 
-Building the Docker container
------------------------------
+The contents of this folder have been moved to:
 
-    docker build -t $USER/assignments .
+[https://github.com/tensorflow/examples/tree/master/courses/udacity_deep_learning](https://github.com/tensorflow/examples/tree/master/courses/udacity_deep_learning)
 
-Running the container
----------------------
-
-    docker run -p 8888:8888 -it --rm $USER/assignments

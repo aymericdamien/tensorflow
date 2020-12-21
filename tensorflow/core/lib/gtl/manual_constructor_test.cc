@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,8 +17,8 @@ limitations under the License.
 
 #include <stdint.h>
 
-#include <gtest/gtest.h>
 #include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/test.h"
 
 namespace tensorflow {
 namespace {
@@ -92,11 +92,8 @@ TEST(ManualConstructorTest, Alignment) {
 
   EXPECT_EQ(reinterpret_cast<char*>(test2.b.get()) - &test2.a,
             reinterpret_cast<char*>(&control2.b) - &control2.a);
-#ifdef ARCH_K8
+#ifdef __x86_64__
   EXPECT_EQ(reinterpret_cast<intptr_t>(test2.b.get()) % 16, 0);
-#endif
-#ifdef ARCH_PIII
-  EXPECT_EQ(reinterpret_cast<intptr_t>(test2.b.get()) % 4, 0);
 #endif
 }
 

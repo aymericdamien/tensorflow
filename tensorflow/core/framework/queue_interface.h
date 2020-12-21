@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_FRAMEWORK_QUEUE_INTERFACE_H_
-#define TENSORFLOW_FRAMEWORK_QUEUE_INTERFACE_H_
+#ifndef TENSORFLOW_CORE_FRAMEWORK_QUEUE_INTERFACE_H_
+#define TENSORFLOW_CORE_FRAMEWORK_QUEUE_INTERFACE_H_
 
 #include <string>
 #include <vector>
 
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/resource_mgr.h"
+#include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/types.h"
-#include "tensorflow/core/platform/port.h"
-#include "tensorflow/core/public/tensor.h"
+#include "tensorflow/core/platform/types.h"
 
 namespace tensorflow {
 
@@ -54,8 +54,13 @@ class QueueInterface : public ResourceBase {
   virtual void TryDequeue(OpKernelContext* ctx, CallbackWithTuple callback) = 0;
 
   // Same as above, but the stashed function object will attempt to dequeue
-  // num_elements items.
+  // num_elements items.  If allow_small_batch is true, and the Queue is
+  // closed but at least 1 element is available, there is no blocking
+  // and between 1 and num_elements items are immediately returned.
+  // If the queue does not support the allow_small_batch flag will
+  // return an Unimplemented error.
   virtual void TryDequeueMany(int num_elements, OpKernelContext* ctx,
+                              bool allow_small_batch,
                               CallbackWithTuple callback) = 0;
 
   // Signals that no more elements will be enqueued, and optionally
@@ -72,16 +77,21 @@ class QueueInterface : public ResourceBase {
   virtual void Close(OpKernelContext* ctx, bool cancel_pending_enqueues,
                      DoneCallback callback) = 0;
 
+  // Returns true if a given queue is closed and false if it is open.
+  virtual bool is_closed() const = 0;
+
   // Assuming *this represents a shared queue, verify that it matches
   // another instantiation indicated by node_def.
   virtual Status MatchesNodeDef(const NodeDef& node_def) = 0;
 
   // Returns the number of elements in the queue.
-  virtual int32 size() = 0;
+  virtual int32 size() const = 0;
 
   virtual const DataTypeVector& component_dtypes() const = 0;
 
-  string DebugString() override { return "A queue"; }
+  string DebugString() const override {
+    return strings::StrCat("A Queue of size: ", size());
+  }
 
  protected:
   virtual ~QueueInterface() {}
@@ -89,4 +99,4 @@ class QueueInterface : public ResourceBase {
 
 }  // namespace tensorflow
 
-#endif  // TENSORFLOW_FRAMEWORK_QUEUE_INTERFACE_H_
+#endif  // TENSORFLOW_CORE_FRAMEWORK_QUEUE_INTERFACE_H_

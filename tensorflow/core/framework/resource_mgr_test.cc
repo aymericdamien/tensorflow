@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,10 +15,19 @@ limitations under the License.
 
 #include "tensorflow/core/framework/resource_mgr.h"
 
-#include <gtest/gtest.h>
+#include <memory>
+
+#include "tensorflow/core/framework/device_attributes.pb.h"
+#include "tensorflow/core/framework/node_def.pb.h"
 #include "tensorflow/core/framework/node_def_util.h"
 #include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/lib/core/refcount.h"
+#include "tensorflow/core/lib/core/status_test_util.h"
+#include "tensorflow/core/lib/core/threadpool.h"
+#include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/lib/strings/strcat.h"
+#include "tensorflow/core/platform/regexp.h"
+#include "tensorflow/core/platform/test.h"
 
 namespace tensorflow {
 
@@ -27,7 +36,7 @@ class Resource : public ResourceBase {
   explicit Resource(const string& label) : label_(label) {}
   ~Resource() override {}
 
-  string DebugString() { return strings::StrCat("R/", label_); }
+  string DebugString() const override { return strings::StrCat("R/", label_); }
 
  private:
   string label_;
@@ -38,7 +47,7 @@ class Other : public ResourceBase {
   explicit Other(const string& label) : label_(label) {}
   ~Other() override {}
 
-  string DebugString() { return strings::StrCat("O/", label_); }
+  string DebugString() const override { return strings::StrCat("O/", label_); }
 
  private:
   string label_;
@@ -68,7 +77,7 @@ string LookupOrCreate(ResourceMgr* rm, const string& container,
 }
 
 static void HasError(const Status& s, const string& substr) {
-  EXPECT_TRUE(StringPiece(s.ToString()).contains(substr))
+  EXPECT_TRUE(absl::StrContains(s.ToString(), substr))
       << s << ", expected substring " << substr;
 }
 
@@ -111,9 +120,16 @@ TEST(ResourceMgrTest, Basic) {
   // Drop the whole container foo.
   TF_CHECK_OK(rm.Cleanup("foo"));
   HasError(FindErr<Resource>(rm, "foo", "bar"), "Not found: Container foo");
+
+  // Dropping it a second time is OK.
+  TF_CHECK_OK(rm.Cleanup("foo"));
+  HasError(FindErr<Resource>(rm, "foo", "bar"), "Not found: Container foo");
+
+  // Dropping a non-existent container is also ok.
+  TF_CHECK_OK(rm.Cleanup("bar"));
 }
 
-TEST(ResourceMgr, CreateOrLookup) {
+TEST(ResourceMgrTest, CreateOrLookup) {
   ResourceMgr rm;
   EXPECT_EQ("R/cat", LookupOrCreate<Resource>(&rm, "foo", "bar", "cat"));
   EXPECT_EQ("R/cat", LookupOrCreate<Resource>(&rm, "foo", "bar", "dog"));
@@ -123,6 +139,30 @@ TEST(ResourceMgr, CreateOrLookup) {
   EXPECT_EQ("O/tiger", LookupOrCreate<Other>(&rm, "foo", "bar", "lion"));
   TF_CHECK_OK(rm.Delete<Other>("foo", "bar"));
   HasError(FindErr<Other>(rm, "foo", "bar"), "Not found: Resource foo/bar");
+}
+
+TEST(ResourceMgrTest, CreateOrLookupRaceCondition) {
+  ResourceMgr rm;
+  std::atomic<int> atomic_int(0);
+  {
+    thread::ThreadPool threads(Env::Default(), "racing_creates", 2);
+    for (int i = 0; i < 2; i++) {
+      threads.Schedule([&rm, &atomic_int] {
+        Resource* r;
+        TF_CHECK_OK(rm.LookupOrCreate<Resource>(
+            "container", "resource-name", &r, [&atomic_int](Resource** ret) {
+              // Maximize chance of encountering race condition if one exists.
+              Env::Default()->SleepForMicroseconds(1 * 1000 * 1000);
+              atomic_int += 1;
+              *ret = new Resource("label");
+              return Status::OK();
+            }));
+        r->Unref();
+      });
+    }
+  }
+  // Resource creator function should always run exactly once.
+  EXPECT_EQ(1, atomic_int);
 }
 
 Status ComputePolicy(const string& attr_container,
@@ -153,14 +193,18 @@ string Policy(const string& attr_container, const string& attr_shared_name,
 
 TEST(ContainerInfo, Basic) {
   // Correct cases.
-  EXPECT_EQ(Policy("", "", false), "[localhost,_0_foo,private]");
+  EXPECT_TRUE(RE2::FullMatch(Policy("", "", false),
+                             "\\[localhost,_\\d+_foo,private\\]"));
   EXPECT_EQ(Policy("", "", true), "[localhost,foo,public]");
   EXPECT_EQ(Policy("", "bar", false), "[localhost,bar,public]");
   EXPECT_EQ(Policy("", "bar", true), "[localhost,bar,public]");
-  EXPECT_EQ(Policy("cat", "", false), "[cat,_1_foo,private]");
+  EXPECT_TRUE(
+      RE2::FullMatch(Policy("cat", "", false), "\\[cat,_\\d+_foo,private\\]"));
   EXPECT_EQ(Policy("cat", "", true), "[cat,foo,public]");
   EXPECT_EQ(Policy("cat", "bar", false), "[cat,bar,public]");
   EXPECT_EQ(Policy("cat", "bar", true), "[cat,bar,public]");
+  EXPECT_EQ(Policy("cat.0-dog", "bar", true), "[cat.0-dog,bar,public]");
+  EXPECT_EQ(Policy(".cat", "bar", true), "[.cat,bar,public]");
 }
 
 Status WrongPolicy(const string& attr_container, const string& attr_shared_name,
@@ -180,9 +224,132 @@ TEST(ContainerInfo, Error) {
 
   // Invalid container.
   HasError(WrongPolicy("12$%", "", false), "container contains invalid char");
+  HasError(WrongPolicy("-cat", "", false), "container contains invalid char");
 
   // Invalid shared name.
   HasError(WrongPolicy("", "_foo", false), "shared_name cannot start with '_'");
+}
+
+// Stub DeviceBase subclass which only sets a device name, for testing resource
+// handles.
+class StubDevice : public DeviceBase {
+ public:
+  explicit StubDevice(const string& name) : DeviceBase(nullptr) {
+    attr_.set_name(name);
+  }
+
+  Allocator* GetAllocator(AllocatorAttributes) override {
+    return cpu_allocator();
+  }
+
+  const DeviceAttributes& attributes() const override { return attr_; }
+  const string& name() const override { return attr_.name(); }
+
+ private:
+  DeviceAttributes attr_;
+};
+
+// Empty stub resource for testing resource handles.
+class StubResource : public ResourceBase {
+ public:
+  string DebugString() const override { return ""; }
+  int value_{0};
+};
+
+TEST(ResourceHandleTest, CRUD) {
+  ResourceMgr resource_mgr("");
+  OpKernelContext::Params params;
+  params.resource_manager = &resource_mgr;
+  StubDevice device("device_name");
+  params.device = &device;
+  OpKernelContext ctx(&params, 0);
+
+  ResourceHandle p =
+      MakeResourceHandle<StubResource>(&ctx, "container", "name");
+
+  {
+    auto* r = new StubResource();
+    r->value_ = 42;
+    TF_EXPECT_OK(CreateResource(&ctx, p, r));
+  }
+  {
+    core::RefCountPtr<StubResource> r;
+    TF_ASSERT_OK(LookupResource(&ctx, p, &r));
+    ASSERT_TRUE(r != nullptr);
+    EXPECT_EQ(r->value_, 42);
+  }
+  {
+    TF_EXPECT_OK(DeleteResource<StubResource>(&ctx, p));
+    core::RefCountPtr<StubResource> unused;
+    EXPECT_FALSE(LookupResource(&ctx, p, &unused).ok());
+  }
+}
+
+TEST(ResourceHandleTest, DifferentDevice) {
+  ResourceMgr resource_mgr("");
+  OpKernelContext::Params params;
+  params.resource_manager = &resource_mgr;
+  StubDevice device("device_name");
+  params.device = &device;
+  OpKernelContext ctx(&params, 0);
+
+  ResourceHandle p =
+      MakeResourceHandle<StubResource>(&ctx, "container", "name");
+
+  ResourceMgr other_resource_mgr("");
+  OpKernelContext::Params other_params;
+  other_params.resource_manager = &other_resource_mgr;
+  StubDevice other_device("other_device_name");
+  other_params.device = &other_device;
+  OpKernelContext other_ctx(&other_params, 0);
+
+  auto* r = new StubResource();
+  ASSERT_FALSE(CreateResource(&other_ctx, p, r).ok());
+  r->Unref();
+}
+
+// Other stub resource to test type-checking of resource handles.
+class OtherStubResource : public ResourceBase {
+ public:
+  string DebugString() const override { return ""; }
+};
+
+TEST(ResourceHandleTest, DifferentType) {
+  ResourceMgr resource_mgr("");
+  OpKernelContext::Params params;
+  params.resource_manager = &resource_mgr;
+  StubDevice device("device_name");
+  params.device = &device;
+  OpKernelContext ctx(&params, 0);
+
+  ResourceHandle p =
+      MakeResourceHandle<StubResource>(&ctx, "container", "name");
+
+  auto* r = new OtherStubResource;
+  ASSERT_FALSE(CreateResource(&ctx, p, r).ok());
+  r->Unref();
+}
+
+TEST(ResourceHandleTest, DeleteUsingResourceHandle) {
+  ResourceMgr resource_mgr("");
+  OpKernelContext::Params params;
+  params.resource_manager = &resource_mgr;
+  StubDevice device("device_name");
+  params.device = &device;
+  OpKernelContext ctx(&params, 0);
+
+  ResourceHandle p =
+      MakeResourceHandle<StubResource>(&ctx, "container", "name");
+
+  StubResource* r = new StubResource;
+  TF_EXPECT_OK(CreateResource(&ctx, p, r));
+
+  core::RefCountPtr<StubResource> lookup_r;
+  TF_EXPECT_OK(LookupResource<StubResource>(&ctx, p, &lookup_r));
+  EXPECT_EQ(lookup_r.get(), r);
+
+  TF_EXPECT_OK(DeleteResource(&ctx, p));
+  EXPECT_NE(LookupResource<StubResource>(&ctx, p, &lookup_r).ok(), true);
 }
 
 }  // end namespace tensorflow

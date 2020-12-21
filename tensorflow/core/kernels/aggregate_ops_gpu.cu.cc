@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,14 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#if GOOGLE_CUDA
+#if (defined(GOOGLE_CUDA) && GOOGLE_CUDA) || \
+    (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
 
 #define EIGEN_USE_GPU
 
 #include "tensorflow/core/kernels/aggregate_ops.h"
 
+#include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/framework/tensor_types.h"
-#include "tensorflow/core/platform/port.h"
+#include "tensorflow/core/platform/types.h"
 
 namespace tensorflow {
 
@@ -140,17 +142,24 @@ struct Add9Functor<GPUDevice, T> {
 
 }  // end namespace functor
 
-// Instantiate the GPU implementation for float.
-template struct functor::Add2Functor<GPUDevice, float>;
-template struct functor::Add3Functor<GPUDevice, float>;
-template struct functor::Add4Functor<GPUDevice, float>;
-template struct functor::Add5Functor<GPUDevice, float>;
-template struct functor::Add6Functor<GPUDevice, float>;
-template struct functor::Add7Functor<GPUDevice, float>;
-template struct functor::Add8Functor<GPUDevice, float>;
-template struct functor::Add8pFunctor<GPUDevice, float>;
-template struct functor::Add9Functor<GPUDevice, float>;
+// Instantiate the GPU implementation for GPU number types.
+#define REGISTER_FUNCTORS(type)                           \
+  template struct functor::Add2Functor<GPUDevice, type>;  \
+  template struct functor::Add3Functor<GPUDevice, type>;  \
+  template struct functor::Add4Functor<GPUDevice, type>;  \
+  template struct functor::Add5Functor<GPUDevice, type>;  \
+  template struct functor::Add6Functor<GPUDevice, type>;  \
+  template struct functor::Add7Functor<GPUDevice, type>;  \
+  template struct functor::Add8Functor<GPUDevice, type>;  \
+  template struct functor::Add8pFunctor<GPUDevice, type>; \
+  template struct functor::Add9Functor<GPUDevice, type>;
+
+TF_CALL_int64(REGISTER_FUNCTORS);
+TF_CALL_GPU_NUMBER_TYPES(REGISTER_FUNCTORS);
+TF_CALL_COMPLEX_TYPES(REGISTER_FUNCTORS);
+
+#undef REGISTER_FUNCTORS
 
 }  // end namespace tensorflow
 
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM

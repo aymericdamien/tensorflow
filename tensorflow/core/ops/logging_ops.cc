@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,46 +13,134 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "tensorflow/core/framework/common_shape_fns.h"
+#include "tensorflow/core/framework/dataset_stateful_op_whitelist.h"
 #include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/shape_inference.h"
 
 namespace tensorflow {
+
+using shape_inference::InferenceContext;
 
 REGISTER_OP("Assert")
     .Input("condition: bool")
     .Input("data: T")
+    .SetIsStateful()
     .Attr("T: list(type)")
     .Attr("summarize: int = 3")
-    .Doc(R"doc(
-Asserts that the given condition is true.
+    .SetShapeFn(shape_inference::NoOutputs);
 
-If `condition` evaluates to false, print the list of tensors in `data`.
-`summarize` determines how many entries of the tensors to print.
-
-condition: The condition to evaluate.
-data: The tensors to print out when condition is false.
-summarize: Print this many entries of each tensor.
-)doc");
+WHITELIST_STATEFUL_OP_FOR_DATASET_FUNCTIONS("Assert");
 
 REGISTER_OP("Print")
     .Input("input: T")
     .Input("data: U")
     .Output("output: T")
+    .SetIsStateful()
     .Attr("T: type")
-    .Attr("U: list(type)")
+    .Attr("U: list(type) >= 0")
     .Attr("message: string = ''")
     .Attr("first_n: int = -1")
     .Attr("summarize: int = 3")
-    .Doc(R"doc(
-Prints a list of tensors.
+    .SetShapeFn(shape_inference::UnchangedShape);
 
-Passes `input` through to `output` and prints `data` when evaluating.
+WHITELIST_STATEFUL_OP_FOR_DATASET_FUNCTIONS("Print");
 
-input: The tensor passed to `output`
-data: A list of tensors to print out when op is evaluated.
-output:= The unmodified `input` tensor
-message: A string, prefix of the error message.
-first_n: Only log `first_n` number of times. -1 disables logging.
-summarize: Only print this many entries of each tensor.
-)doc");
+REGISTER_OP("PrintV2")
+    .Input("input: string")
+    .SetIsStateful()
+    .Attr("output_stream: string = 'stderr'")
+    .Attr("end: string = '\n'")
+    .SetShapeFn([](InferenceContext* c) {
+      // Early exit if rank is unknown.
+      if (!c->RankKnown(c->input(0))) return Status::OK();
+      // Make sure that the input is a scalar.
+      if (c->Rank(c->input(0)) != 0) {
+        return errors::InvalidArgument("input must be a scalar, but has rank: ",
+                                       c->Rank(c->input(0)));
+      }
+      return Status::OK();
+    });
+
+WHITELIST_STATEFUL_OP_FOR_DATASET_FUNCTIONS("PrintV2");
+
+// ----------------------------------------------------------------------------
+// Operators that deal with SummaryProtos (encoded as DT_STRING tensors) as
+// inputs or outputs in various ways.
+
+REGISTER_OP("TensorSummaryV2")
+    .Input("tag: string")
+    .Input("tensor: T")
+    // This serialized summary metadata field describes a summary value,
+    // specifically which plugins may use that summary.
+    .Input("serialized_summary_metadata: string")
+    .Output("summary: string")
+    .Attr("T: type")
+    .SetShapeFn(shape_inference::ScalarShape);
+
+REGISTER_OP("TensorSummary")
+    .Input("tensor: T")
+    .Output("summary: string")
+    .Attr("T: type")
+    .Attr("description: string = ''")
+    .Attr("labels: list(string) = []")
+    .Attr("display_name: string = ''")
+    .SetShapeFn(shape_inference::ScalarShape);
+
+REGISTER_OP("ScalarSummary")
+    .Input("tags: string")
+    .Input("values: T")
+    .Output("summary: string")
+    .Attr("T: realnumbertype")
+    .SetShapeFn(shape_inference::ScalarShape);
+
+REGISTER_OP("HistogramSummary")
+    .Input("tag: string")
+    .Input("values: T")
+    .Output("summary: string")
+    .Attr("T: realnumbertype = DT_FLOAT")
+    .SetShapeFn(shape_inference::ScalarShape);
+
+REGISTER_OP("ImageSummary")
+    .Input("tag: string")
+    .Input("tensor: T")
+    .Output("summary: string")
+    .Attr("max_images: int >= 1 = 3")
+    .Attr("T: {uint8, float, half, float64} = DT_FLOAT")
+    .Attr(
+        "bad_color: tensor = { dtype: DT_UINT8 "
+        "tensor_shape: { dim { size: 4 } } "
+        "int_val: 255 int_val: 0 int_val: 0 int_val: 255 }")
+    .SetShapeFn(shape_inference::ScalarShape);
+
+REGISTER_OP("AudioSummaryV2")
+    .Input("tag: string")
+    .Input("tensor: float")
+    .Input("sample_rate: float")
+    .Output("summary: string")
+    .Attr("max_outputs: int >= 1 = 3")
+    .SetShapeFn(shape_inference::ScalarShape);
+
+REGISTER_OP("AudioSummary")
+    .Input("tag: string")
+    .Input("tensor: float")
+    .Output("summary: string")
+    .Attr("sample_rate: float")
+    .Attr("max_outputs: int >= 1 = 3")
+    .SetShapeFn(shape_inference::ScalarShape)
+    .Deprecated(15, "Use AudioSummaryV2.");
+
+REGISTER_OP("MergeSummary")
+    .Input("inputs: N * string")
+    .Output("summary: string")
+    .Attr("N : int >= 1")
+    .SetShapeFn(shape_inference::ScalarShape);
+
+REGISTER_OP("Timestamp")
+    .Output("ts: float64")
+    .SetIsStateful()
+    .SetShapeFn(shape_inference::ScalarShape);
+
+WHITELIST_STATEFUL_OP_FOR_DATASET_FUNCTIONS("Timestamp");
 
 }  // end namespace tensorflow

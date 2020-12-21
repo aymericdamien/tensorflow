@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,12 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_KERNELS_GUARDED_PHILOX_RANDOM_H_
-#define TENSORFLOW_KERNELS_GUARDED_PHILOX_RANDOM_H_
+#ifndef TENSORFLOW_CORE_UTIL_GUARDED_PHILOX_RANDOM_H_
+#define TENSORFLOW_CORE_UTIL_GUARDED_PHILOX_RANDOM_H_
 
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/lib/random/philox_random.h"
-#include "tensorflow/core/platform/port.h"
+#include "tensorflow/core/platform/macros.h"
+#include "tensorflow/core/platform/mutex.h"
+#include "tensorflow/core/platform/types.h"
 
 namespace tensorflow {
 
@@ -47,20 +49,29 @@ class GuardedPhiloxRandom {
 
   // Initialize with given seeds.
   void Init(int64 seed, int64 seed2);
+  void Init(random::PhiloxRandom::ResultType counter,
+            random::PhiloxRandom::Key key);
 
   // Reserve a certain number of 128-bit samples.
   // This function is thread safe.  The returned generator is valid for the
   // given number of samples, and can be used without a lock.
   random::PhiloxRandom ReserveSamples128(int64 samples);
 
-  // Reserve a certain number of 32-bit samples
+  // Reserve a certain number of 32-bit samples.
   random::PhiloxRandom ReserveSamples32(int64 samples) {
     return ReserveSamples128((samples + 3) / 4);
   }
 
+  // Reserve enough random samples in the generator for the given output count.
+  random::PhiloxRandom ReserveRandomOutputs(int64 output_count,
+                                            int multiplier) {
+    int64 conservative_sample_count = output_count * multiplier;
+    return ReserveSamples128(conservative_sample_count);
+  }
+
  private:
   mutex mu_;
-  random::PhiloxRandom generator_ GUARDED_BY(mu_);
+  random::PhiloxRandom generator_ TF_GUARDED_BY(mu_);
   bool initialized_;
 
   TF_DISALLOW_COPY_AND_ASSIGN(GuardedPhiloxRandom);
@@ -68,4 +79,4 @@ class GuardedPhiloxRandom {
 
 }  // namespace tensorflow
 
-#endif  // TENSORFLOW_KERNELS_GUARDED_PHILOX_RANDOM_H_
+#endif  // TENSORFLOW_CORE_UTIL_GUARDED_PHILOX_RANDOM_H_

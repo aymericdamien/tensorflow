@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,17 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 #define EIGEN_USE_GPU
-
-#include <stdio.h>
 
 #include "tensorflow/core/kernels/slice_op.h"
 
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/framework/tensor_types.h"
-#include "tensorflow/core/platform/port.h"
+#include "tensorflow/core/platform/types.h"
 
 namespace tensorflow {
 
@@ -34,13 +32,19 @@ typedef Eigen::GpuDevice GPUDevice;
   template struct functor::Slice<GPUDevice, T, 2>; \
   template struct functor::Slice<GPUDevice, T, 3>; \
   template struct functor::Slice<GPUDevice, T, 4>; \
-  template struct functor::Slice<GPUDevice, T, 5>;
+  template struct functor::Slice<GPUDevice, T, 5>; \
+  template struct functor::Slice<GPUDevice, T, 6>; \
+  template struct functor::Slice<GPUDevice, T, 7>; \
+  template struct functor::Slice<GPUDevice, T, 8>;
 
-TF_CALL_GPU_NUMBER_TYPES(DEFINE_GPU_KERNELS);
-DEFINE_GPU_KERNELS(int32);
+TF_CALL_bfloat16(DEFINE_GPU_KERNELS);
+TF_CALL_int8(DEFINE_GPU_KERNELS);
+TF_CALL_int32(DEFINE_GPU_KERNELS);
+TF_CALL_int64(DEFINE_GPU_KERNELS);
+TF_CALL_GPU_ALL_TYPES(DEFINE_GPU_KERNELS);
 
 #undef DEFINE_GPU_KERNELS
 
 }  // end namespace tensorflow
 
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM

@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,21 +15,22 @@ limitations under the License.
 
 #include <functional>
 #include <memory>
-#include <vector>
 
-#include <gtest/gtest.h>
+#include "tensorflow/core/common_runtime/kernel_benchmark_testlib.h"
 #include "tensorflow/core/framework/allocator.h"
 #include "tensorflow/core/framework/fake_input.h"
-#include "tensorflow/core/framework/graph.pb.h"
 #include "tensorflow/core/framework/node_def_builder.h"
 #include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_testutil.h"
 #include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/graph/node_builder.h"
 #include "tensorflow/core/kernels/ops_testutil.h"
 #include "tensorflow/core/kernels/ops_util.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/lib/random/simple_philox.h"
-#include "tensorflow/core/public/tensor.h"
+#include "tensorflow/core/platform/test.h"
+#include "tensorflow/core/platform/test_benchmark.h"
 
 namespace tensorflow {
 
@@ -37,7 +38,7 @@ static const float tol_ = 1e-4;
 
 class LRNFloatTest : public OpsTestBase {
  protected:
-  LRNFloatTest() : philox_(123, 17), rand_(&philox_) { RequireDefaultOps(); }
+  LRNFloatTest() : philox_(123, 17), rand_(&philox_) {}
 
   int GetIntAttr(const string& name) {
     int value;
@@ -66,14 +67,14 @@ class LRNFloatTest : public OpsTestBase {
 
     Eigen::Tensor<float, 4, Eigen::RowMajor> expected(batch_size, rows, cols,
                                                       depth);
-    auto out = expected.reshape(Eigen::DSizes<int64, 2>{rest, depth});
+    auto out = expected.reshape(Eigen::DSizes<Eigen::Index, 2>{rest, depth});
     auto in = input.shaped<float, 2>({rest, depth});
 
     for (int64 i = 0; i < rest; ++i) {
       Eigen::Tensor<float, 1, Eigen::RowMajor> out_col(depth);
       for (int64 d = 0; d < depth; ++d) {
         float denom = 0.0f;
-        for (int64 r = std::max(0ll, d - depth_radius);
+        for (int64 r = std::max(int64{0}, d - depth_radius);
              r < std::min(depth, d + depth_radius + 1); ++r) {
           denom += in(i, r) * in(i, r);
         }
@@ -95,17 +96,17 @@ class LRNFloatTest : public OpsTestBase {
 };
 
 TEST_F(LRNFloatTest, Depth96) {
-  ASSERT_OK(NodeDefBuilder("lrn_op", "LRN")
-                .Input(FakeInput())
-                .Attr("depth_radius", 5)
-                .Attr("bias", 1.0f)
-                .Attr("alpha", 0.1f)
-                .Attr("beta", 2.0f)
-                .Finalize(node_def()));
-  ASSERT_OK(InitOp());
+  TF_ASSERT_OK(NodeDefBuilder("lrn_op", "LRN")
+                   .Input(FakeInput())
+                   .Attr("depth_radius", 5)
+                   .Attr("bias", 1.0f)
+                   .Attr("alpha", 0.1f)
+                   .Attr("beta", 2.0f)
+                   .Finalize(node_def()));
+  TF_ASSERT_OK(InitOp());
   AddInput<float>(TensorShape({1, 1, 1, 96}),
-                  [this](int i) -> float { return i + 1; });
-  ASSERT_OK(RunOpKernel());
+                  [](int i) -> float { return i + 1; });
+  TF_ASSERT_OK(RunOpKernel());
   auto actual = GetOutput(0)->tensor<float, 4>();
 
   // Output for Node 0 with Value 1:
@@ -131,17 +132,17 @@ TEST_F(LRNFloatTest, Depth96) {
 }
 
 TEST_F(LRNFloatTest, Depth16) {
-  ASSERT_OK(NodeDefBuilder("lrn_op", "LRN")
-                .Input(FakeInput())
-                .Attr("depth_radius", 5)
-                .Attr("bias", 1.0f)
-                .Attr("alpha", 0.1f)
-                .Attr("beta", 2.0f)
-                .Finalize(node_def()));
-  ASSERT_OK(InitOp());
+  TF_ASSERT_OK(NodeDefBuilder("lrn_op", "LRN")
+                   .Input(FakeInput())
+                   .Attr("depth_radius", 5)
+                   .Attr("bias", 1.0f)
+                   .Attr("alpha", 0.1f)
+                   .Attr("beta", 2.0f)
+                   .Finalize(node_def()));
+  TF_ASSERT_OK(InitOp());
   AddInput<float>(TensorShape({1, 1, 1, 16}),
-                  [this](int i) -> float { return i + 1; });
-  ASSERT_OK(RunOpKernel());
+                  [](int i) -> float { return i + 1; });
+  TF_ASSERT_OK(RunOpKernel());
   auto actual = GetOutput(0)->tensor<float, 4>();
 
   // Output for Node 0 with Value 1:
@@ -174,17 +175,17 @@ static double RndGaussian(random::SimplePhilox* rnd) {
 
 #define TCASE(NAME, DEPTH, BATCH, DEPTH_RADIUS, BIAS, ALPHA, BETA)           \
   TEST_F(LRNFloatTest, NAME) {                                               \
-    ASSERT_OK(NodeDefBuilder("lrn_op", "LRN")                                \
-                  .Input(FakeInput())                                        \
-                  .Attr("depth_radius", (DEPTH_RADIUS))                      \
-                  .Attr("bias", (BIAS))                                      \
-                  .Attr("alpha", ((ALPHA) / 10))                             \
-                  .Attr("beta", (BETA))                                      \
-                  .Finalize(node_def()));                                    \
-    ASSERT_OK(InitOp());                                                     \
+    TF_ASSERT_OK(NodeDefBuilder("lrn_op", "LRN")                             \
+                     .Input(FakeInput())                                     \
+                     .Attr("depth_radius", (DEPTH_RADIUS))                   \
+                     .Attr("bias", (BIAS))                                   \
+                     .Attr("alpha", ((ALPHA) / 10))                          \
+                     .Attr("beta", (BETA))                                   \
+                     .Finalize(node_def()));                                 \
+    TF_ASSERT_OK(InitOp());                                                  \
     AddInput<float>(TensorShape({BATCH, 1, 1, DEPTH}),                       \
                     [this](int i) -> float { return RndGaussian(&rand_); }); \
-    ASSERT_OK(RunOpKernel());                                                \
+    TF_ASSERT_OK(RunOpKernel());                                             \
     EXPECT_TRUE(Compare());                                                  \
   }
 
@@ -197,4 +198,41 @@ TCASE(T3, 128,   4,     3,            2.0f, 1.0f,  1.0f)
 // clang-format on
 
 #undef TCASE
+
+static Graph* BM_LRNGrad(int batches, int rows, int cols, int depth,
+                         int depth_radius) {
+  Graph* g = new Graph(OpRegistry::Global());
+  Tensor grads(DT_FLOAT, TensorShape({batches, rows, cols, depth}));
+  grads.flat<float>().setRandom();
+
+  Tensor in(DT_FLOAT, TensorShape({batches, rows, cols, depth}));
+  in.flat<float>().setRandom();
+
+  Tensor out(DT_FLOAT, TensorShape({batches, rows, cols, depth}));
+
+  Node* ret;
+  TF_CHECK_OK(NodeBuilder(g->NewName("lrn_grad_op"), "LRNGrad")
+                  .Input(test::graph::Constant(g, grads))
+                  .Input(test::graph::Constant(g, in))
+                  .Input(test::graph::Constant(g, out))
+                  .Attr("depth_radius", depth_radius)
+                  .Attr("bias", 1.0f)
+                  .Attr("alpha", 1.0f / 10)
+                  .Attr("beta", 2.0f)
+                  .Finalize(g, &ret));
+  return g;
+}
+
+#define BM_LRNGradDev(DEVICE, B, R, C, D, DR)                                 \
+  static void BM_LRNGrad_##DEVICE##_##B##_##R##_##C##_##D##_##DR(int iters) { \
+    testing::ItemsProcessed(static_cast<int64>(iters) * B * R * C * D * DR *  \
+                            4);                                               \
+    test::Benchmark(#DEVICE, BM_LRNGrad(B, R, C, D, DR)).Run(iters);          \
+  }                                                                           \
+  BENCHMARK(BM_LRNGrad_##DEVICE##_##B##_##R##_##C##_##D##_##DR)
+
+BM_LRNGradDev(cpu, 128, 12, 12, 64, 4);
+BM_LRNGradDev(cpu, 128, 56, 56, 64, 2);
+BM_LRNGradDev(cpu, 128, 27, 27, 192, 2);
+
 }  // namespace tensorflow

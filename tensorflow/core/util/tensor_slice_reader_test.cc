@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,18 +13,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <utility>
+
 #include "tensorflow/core/util/tensor_slice_reader.h"
 
-#include <gtest/gtest.h>
 #include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/framework/versions.pb.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/lib/core/stringpiece.h"
 #include "tensorflow/core/lib/io/path.h"
+#include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/lib/strings/strcat.h"
+#include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/logging.h"
-#include "tensorflow/core/platform/port.h"
 #include "tensorflow/core/platform/protobuf.h"
 #include "tensorflow/core/platform/test.h"
+#include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/public/version.h"
 #include "tensorflow/core/util/saved_tensor_slice_util.h"
 #include "tensorflow/core/util/tensor_slice_reader_cache.h"
 #include "tensorflow/core/util/tensor_slice_writer.h"
@@ -47,8 +52,9 @@ namespace {
 //
 // We assume this is a row-major matrix.
 
-void SimpleFloatHelper(TensorSliceWriter::CreateBuilderFunction create_function,
-                       TensorSliceReader::OpenTableFunction open_function) {
+void SimpleFloatHelper(
+    const TensorSliceWriter::CreateBuilderFunction& create_function,
+    TensorSliceReader::OpenTableFunction open_function) {
   const string fname_base = io::JoinPath(testing::TmpDir(), "float_checkpoint");
 
   TensorShape shape({4, 5});
@@ -107,8 +113,8 @@ void SimpleFloatHelper(TensorSliceWriter::CreateBuilderFunction create_function,
 
   // Now we need to read the tensor slices
   const string filepattern = strings::StrCat(fname_base, "_*");
-  TensorSliceReader reader(filepattern, open_function);
-  EXPECT_OK(reader.status());
+  TensorSliceReader reader(filepattern, std::move(open_function));
+  TF_EXPECT_OK(reader.status());
   EXPECT_EQ(2, reader.num_files());
 
   // We query some of the tensors
@@ -116,10 +122,7 @@ void SimpleFloatHelper(TensorSliceWriter::CreateBuilderFunction create_function,
     TensorShape shape;
     DataType type;
     EXPECT_TRUE(reader.HasTensor("test", &shape, &type));
-    EXPECT_EQ(
-        "dim { size: 4 } "
-        "dim { size: 5 }",
-        shape.DebugString());
+    EXPECT_EQ("[4,5]", shape.DebugString());
     EXPECT_EQ(DT_FLOAT, type);
     EXPECT_FALSE(reader.HasTensor("don't exist", nullptr, nullptr));
   }
@@ -173,9 +176,10 @@ TEST(TensorSliceReaderTest, SimpleFloat) {
 }
 
 template <typename T, typename U>
-void SimpleIntXHelper(TensorSliceWriter::CreateBuilderFunction create_function,
-                      TensorSliceReader::OpenTableFunction open_function,
-                      const string& checkpoint_file) {
+void SimpleIntXHelper(
+    const TensorSliceWriter::CreateBuilderFunction& create_function,
+    TensorSliceReader::OpenTableFunction open_function,
+    const string& checkpoint_file) {
   const string fname_base = io::JoinPath(testing::TmpDir(), checkpoint_file);
 
   TensorShape shape({4, 5});
@@ -234,8 +238,8 @@ void SimpleIntXHelper(TensorSliceWriter::CreateBuilderFunction create_function,
 
   // Now we need to read the tensor slices
   const string filepattern = strings::StrCat(fname_base, "_*");
-  TensorSliceReader reader(filepattern, open_function);
-  EXPECT_OK(reader.status());
+  TensorSliceReader reader(filepattern, std::move(open_function));
+  TF_EXPECT_OK(reader.status());
   EXPECT_EQ(2, reader.num_files());
 
   // We query some of the tensors
@@ -243,10 +247,7 @@ void SimpleIntXHelper(TensorSliceWriter::CreateBuilderFunction create_function,
     TensorShape shape;
     DataType type;
     EXPECT_TRUE(reader.HasTensor("test", &shape, &type));
-    EXPECT_EQ(
-        "dim { size: 4 } "
-        "dim { size: 5 }",
-        shape.DebugString());
+    EXPECT_EQ("[4,5]", shape.DebugString());
     EXPECT_EQ(DataTypeToEnum<T>::v(), type);
     EXPECT_FALSE(reader.HasTensor("don't exist", nullptr, nullptr));
   }
@@ -309,8 +310,8 @@ TEST_SIMPLE_INT(int8, int32)
 TEST_SIMPLE_INT(uint8, int32)
 
 void CachedTensorSliceReaderTesterHelper(
-    TensorSliceWriter::CreateBuilderFunction create_function,
-    TensorSliceReader::OpenTableFunction open_function) {
+    const TensorSliceWriter::CreateBuilderFunction& create_function,
+    const TensorSliceReader::OpenTableFunction& open_function) {
   const string fname_base = io::JoinPath(testing::TmpDir(), "float_checkpoint");
 
   TensorShape shape({4, 5});
@@ -380,10 +381,7 @@ void CachedTensorSliceReaderTesterHelper(
     TensorShape shape;
     DataType type;
     EXPECT_TRUE(reader->HasTensor("test", &shape, &type));
-    EXPECT_EQ(
-        "dim { size: 4 } "
-        "dim { size: 5 }",
-        shape.DebugString());
+    EXPECT_EQ("[4,5]", shape.DebugString());
     EXPECT_EQ(DT_FLOAT, type);
     EXPECT_FALSE(reader->HasTensor("don't exist", nullptr, nullptr));
   }
@@ -401,6 +399,65 @@ void CachedTensorSliceReaderTesterHelper(
 TEST(CachedTensorSliceReaderTest, SimpleFloat) {
   CachedTensorSliceReaderTesterHelper(CreateTableTensorSliceBuilder,
                                       OpenTableTensorSliceReader);
+}
+
+static void VersionTest(const VersionDef& versions, const string& error) {
+  const string path = io::JoinPath(testing::TmpDir(), "checkpoint");
+
+  {
+    // Prepare an empty checkpoint with some version information
+    SavedTensorSlices sts;
+    *sts.mutable_meta()->mutable_versions() = versions;
+    string contents;
+    EXPECT_TRUE(sts.SerializeToString(&contents));
+
+    // Write it to disk
+    TensorSliceWriter::Builder* builder;
+    TF_ASSERT_OK(CreateTableTensorSliceBuilder(path, &builder));
+    builder->Add(kSavedTensorSlicesKey, contents);
+    int64 file_size;
+    TF_EXPECT_OK(builder->Finish(&file_size));
+    delete builder;
+  }
+
+  // Read it back in and verify that we get the expected error
+  TensorSliceReader reader(path, OpenTableTensorSliceReader);
+  EXPECT_TRUE(reader.status().code() == error::INVALID_ARGUMENT &&
+              absl::StartsWith(reader.status().error_message(), error))
+      << "Expected error starting with '" << errors::InvalidArgument(error)
+      << "', got '" << reader.status() << "'";
+}
+
+TEST(CheckpointVersionTest, MinConsumer) {
+  VersionDef versions;
+  versions.set_producer(TF_CHECKPOINT_VERSION + 1);
+  versions.set_min_consumer(TF_CHECKPOINT_VERSION + 1);
+  VersionTest(
+      versions,
+      strings::StrCat("Checkpoint min consumer version ",
+                      TF_CHECKPOINT_VERSION + 1, " above current version ",
+                      TF_CHECKPOINT_VERSION, " for TensorFlow"));
+}
+
+TEST(CheckpointVersionTest, MinProducer) {
+  VersionDef versions;
+  versions.set_producer(TF_CHECKPOINT_VERSION_MIN_PRODUCER - 1);
+  VersionTest(versions, strings::StrCat("Checkpoint producer version ",
+                                        TF_CHECKPOINT_VERSION_MIN_PRODUCER - 1,
+                                        " below min producer ",
+                                        TF_CHECKPOINT_VERSION_MIN_PRODUCER,
+                                        " supported by TensorFlow"));
+}
+
+TEST(CheckpointVersionTest, BadConsumer) {
+  VersionDef versions;
+  versions.set_producer(TF_CHECKPOINT_VERSION + 1);
+  versions.add_bad_consumers(TF_CHECKPOINT_VERSION);
+  VersionTest(
+      versions,
+      strings::StrCat(
+          "Checkpoint disallows consumer version ", TF_CHECKPOINT_VERSION,
+          ".  Please upgrade TensorFlow: this version is likely buggy."));
 }
 
 }  // namespace

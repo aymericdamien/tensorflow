@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,14 +15,69 @@ limitations under the License.
 
 #include "tensorflow/stream_executor/dnn.h"
 
-#include "tensorflow/stream_executor/lib/strcat.h"
-#include "tensorflow/stream_executor/lib/stringprintf.h"
+#include "absl/hash/hash.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 
-namespace perftools {
-namespace gputools {
+namespace stream_executor {
 namespace dnn {
 
-string QuantizedActivationModeString(QuantizedActivationMode mode) {
+constexpr DataType ToDataType<float>::value;
+constexpr DataType ToDataType<double>::value;
+constexpr DataType ToDataType<Eigen::half>::value;
+constexpr DataType ToDataType<int8>::value;
+constexpr DataType ToDataType<int32>::value;
+
+uint64 AlgorithmDesc::hash() const {
+  auto p = std::make_pair(algo_id(), tensor_ops_enabled());
+  return absl::Hash<decltype(p)>()(p);
+}
+
+std::string AlgorithmDesc::ToString() const {
+  if (tensor_ops_enabled()) {
+    return absl::StrCat(algo_id(), "#TC");
+  } else {
+    return absl::StrCat(algo_id());
+  }
+}
+
+bool DnnSupport::GetConvolveAlgorithms(
+    bool with_winograd_nonfused, int cc_major, int cc_minor,
+    std::vector<AlgorithmDesc>* out_algorithms) {
+  return false;
+}
+
+bool DnnSupport::GetMIOpenConvolveAlgorithms(
+    dnn::ConvolutionKind /*kind*/, dnn::DataType /*element_type*/,
+    Stream* /*stream*/, const dnn::BatchDescriptor& /*input_descriptor*/,
+    DeviceMemoryBase input_data,
+    const dnn::FilterDescriptor& /*filter_descriptor*/,
+    DeviceMemoryBase filter_data,
+    const dnn::BatchDescriptor& /*output_descriptor*/,
+    DeviceMemoryBase output_data,
+    const dnn::ConvolutionDescriptor& /*convolution_descriptor*/,
+    ScratchAllocator* scratch_allocator,
+    std::vector<ProfileResult>* /*out_algorithms*/) {
+  return false;
+}
+
+bool DnnSupport::GetRnnAlgorithms(std::vector<AlgorithmDesc>* out_algorithms) {
+  return false;
+}
+
+bool DnnSupport::GetConvolveBackwardDataAlgorithms(
+    bool with_winograd_nonfused, int cc_major, int cc_minor,
+    std::vector<AlgorithmDesc>* out_algorithms) {
+  return false;
+}
+
+bool DnnSupport::GetConvolveBackwardFilterAlgorithms(
+    bool with_winograd_nonfused, int cc_major, int cc_minor,
+    std::vector<AlgorithmDesc>* out_algorithms) {
+  return false;
+}
+
+std::string QuantizedActivationModeString(QuantizedActivationMode mode) {
   switch (mode) {
     case dnn::QuantizedActivationMode::k8Bit:
       return "uint8";
@@ -34,9 +89,10 @@ string QuantizedActivationModeString(QuantizedActivationMode mode) {
       LOG(FATAL) << "Unknown quantized_activation_mode "
                  << static_cast<int32>(mode);
   }
+  return "unknown quantized_activation_mode";
 }
 
-string ActivationModeString(ActivationMode mode) {
+std::string ActivationModeString(ActivationMode mode) {
   switch (mode) {
     case ActivationMode::kSigmoid:
       return "sigmoid";
@@ -48,12 +104,15 @@ string ActivationModeString(ActivationMode mode) {
       return "reluX";
     case ActivationMode::kTanh:
       return "tanh";
+    case ActivationMode::kBandPass:
+      return "bandpass";
     default:
       LOG(FATAL) << "Unknown activation_mode " << static_cast<int32>(mode);
   }
+  return "unknown activation_mode";
 }
 
-string ElementwiseOperationString(ElementwiseOperation op) {
+std::string ElementwiseOperationString(ElementwiseOperation op) {
   switch (op) {
     case ElementwiseOperation::kAdd:
       return "add";
@@ -62,9 +121,10 @@ string ElementwiseOperationString(ElementwiseOperation op) {
     default:
       LOG(FATAL) << "Unknown elementwise op " << static_cast<int32>(op);
   }
+  return "unknown element wise op";
 }
 
-string DataLayoutString(DataLayout layout) {
+std::string DataLayoutString(DataLayout layout) {
   switch (layout) {
     case DataLayout::kYXDepthBatch:
       return "YXDepthBatch";
@@ -74,15 +134,22 @@ string DataLayoutString(DataLayout layout) {
       return "BatchYXDepth";
     case DataLayout::kBatchDepthYX:
       return "BatchDepthYX";
+    case DataLayout::kBatchDepthYX4:
+      return "BatchDepthYX4";
     default:
       LOG(FATAL) << "Unknown data layout " << static_cast<int32>(layout);
   }
+  return "unknown data layout";
 }
 
-string FilterLayoutString(FilterLayout layout) {
+std::string FilterLayoutString(FilterLayout layout) {
   switch (layout) {
     case FilterLayout::kOutputInputYX:
       return "OutputInputYX";
+    case FilterLayout::kOutputYXInput:
+      return "OutputYXInput";
+    case FilterLayout::kOutputInputYX4:
+      return "OutputInputYX4";
     case FilterLayout::kInputYXOutput:
       return "InputYXOutput";
     case FilterLayout::kYXInputOutput:
@@ -90,9 +157,26 @@ string FilterLayoutString(FilterLayout layout) {
     default:
       LOG(FATAL) << "Unknown filter layout " << static_cast<int32>(layout);
   }
+  return "unknown filter layout";
 }
 
-string ShortPoolingModeString(PoolingMode mode) {
+std::string PadAlignmentString(PadAlignment alignment) {
+  switch (alignment) {
+    case PadAlignment::kDefault:
+      return "default";
+    case PadAlignment::kCudnnPadding:
+      return "cuDNN padding";
+    case PadAlignment::kTensorFlowPadding:
+      return "TensorFlow padding";
+  }
+  return "unknown pad alignment";
+}
+
+std::ostream& operator<<(std::ostream& str, dnn::PadAlignment alignment) {
+  return str << PadAlignmentString(alignment);
+}
+
+std::string ShortPoolingModeString(PoolingMode mode) {
   switch (mode) {
     case PoolingMode::kMaximum:
       return "Max";
@@ -101,51 +185,157 @@ string ShortPoolingModeString(PoolingMode mode) {
     default:
       LOG(FATAL) << "Unknown filter layout " << static_cast<int32>(mode);
   }
+  return "unknown filter layout";
+}
+
+std::tuple<int, int, int> GetDimIndices(const DataLayout& layout,
+                                        const int data_dims) {
+  int depth_idx, batch_idx, spatial_idx;
+  switch (layout) {
+    case DataLayout::kYXBatchDepth:
+      depth_idx = data_dims - 1;
+      batch_idx = data_dims - 2;
+      spatial_idx = 0;
+      break;
+
+    case DataLayout::kYXDepthBatch:
+      depth_idx = data_dims - 2;
+      batch_idx = data_dims - 1;
+      spatial_idx = 0;
+      break;
+
+    case DataLayout::kBatchYXDepth:
+      depth_idx = data_dims - 1;
+      batch_idx = 0;
+      spatial_idx = 1;
+      break;
+
+    case DataLayout::kBatchDepthYX:
+    case DataLayout::kBatchDepthYX4:
+      depth_idx = 1;
+      batch_idx = 0;
+      spatial_idx = 2;
+      break;
+
+    default:
+      LOG(FATAL) << "Unknown layout " << layout;
+  }
+
+  return std::make_tuple(depth_idx, batch_idx, spatial_idx);
+}
+
+std::vector<int64> ReorderDims(const std::vector<int64>& input,
+                               const DataLayout& from, const DataLayout& to) {
+  if (from == to) return input;
+
+  int d_idx_from, b_idx_from, spatial_idx_from;
+  int d_idx_to, b_idx_to, spatial_idx_to;
+
+  std::tie(d_idx_from, b_idx_from, spatial_idx_from) =
+      GetDimIndices(from, input.size());
+  std::tie(d_idx_to, b_idx_to, spatial_idx_to) =
+      GetDimIndices(to, input.size());
+
+  std::vector<int64> reordered(input.size());
+  reordered[b_idx_to] = input[b_idx_from];
+  reordered[d_idx_to] = input[d_idx_from];
+
+  for (size_t i = 0; i < input.size() - 2;
+       i++, spatial_idx_from++, spatial_idx_to++) {
+    reordered[spatial_idx_to] = input[spatial_idx_from];
+  }
+
+  return reordered;
+}
+
+// -- AlgorithmConfig
+
+std::string AlgorithmConfig::ToString() const {
+  std::string algo = "none";
+  if (algorithm().has_value()) {
+    algo = algorithm()->ToString();
+  }
+  std::string algo_no_scratch = "none";
+  if (algorithm_no_scratch().has_value()) {
+    algo_no_scratch = algorithm_no_scratch()->ToString();
+  }
+  return absl::StrCat(algo, ", ", algo_no_scratch);
 }
 
 // -- BatchDescriptor
 
-BatchDescriptor::BatchDescriptor()
-    : count_(0),
-      feature_map_count_(0),
-      height_(0),
-      width_(0),
-      value_max_(0.0),
+BatchDescriptor::BatchDescriptor(int ndims)
+    : value_max_(0.0),
       value_min_(0.0),
-      layout_(DataLayout::kYXDepthBatch),
-      quantized_activation_mode_(QuantizedActivationMode::k8Bit) {}
+      quantized_activation_mode_(QuantizedActivationMode::k8Bit) {
+  tensor_.mutable_dimensions()->Resize(ndims + 2, 0);
+  set_layout(DataLayout::kYXDepthBatch);
+}
+
+BatchDescriptor::BatchDescriptor() : BatchDescriptor(/*ndims=*/2) {}
+
+std::vector<int64> BatchDescriptor::full_dims(const DataLayout& layout) const {
+  std::vector<int64> bdyx_dims(ndims() + 2);
+  bdyx_dims[0] = count();
+  bdyx_dims[1] = feature_map_count();
+  std::copy(spatial_size().begin(), spatial_size().end(),
+            bdyx_dims.begin() + 2);
+  return ReorderDims(bdyx_dims, DataLayout::kBatchDepthYX, layout);
+}
+
+std::vector<int64> BatchDescriptor::full_strides(
+    const DataLayout& layout) const {
+  if (this->layout() == DataLayout::kBatchDepthYX4) {
+    LOG(FATAL)
+        << "Cannot compute full strides for batch descriptor " << ToString()
+        << ", because its layout is kBatchDepthYX4. In fact, "
+           "cudnnSetTensorNdDescriptor doesn't work for kBatchDepthYX4 at all. "
+           "Use cudnnSetTensor4DDescriptor to set cudnnTensorDescriptor_t "
+           "instead.";
+  }
+  std::vector<int64> phys_dims = full_dims(this->layout());
+  std::vector<int64> phys_strides(phys_dims.size());
+  phys_strides[ndims() + 1] = 1;
+  for (int i = ndims(); i >= 0; i--) {
+    phys_strides[i] = phys_strides[i + 1] * phys_dims[i + 1];
+  }
+  return ReorderDims(phys_strides, this->layout(), layout);
+}
 
 void BatchDescriptor::CloneFrom(const BatchDescriptor& other) {
-  count_ = other.count_;
-  feature_map_count_ = other.feature_map_count_;
-  height_ = other.height_;
-  width_ = other.width_;
+  tensor_ = other.tensor_;
   value_max_ = other.value_max_;
   value_min_ = other.value_min_;
-  layout_ = other.layout_;
   quantized_activation_mode_ = other.quantized_activation_mode_;
 }
 
-string BatchDescriptor::ToString() const {
-  return port::Printf(
-      "{count: %lld feature_map_count: %lld height: %lld width: %lld "
+std::string BatchDescriptor::ToString() const {
+  std::string spatial;
+  for (int i = 0; i < ndims(); i++) {
+    absl::StrAppendFormat(&spatial, "%d ", spatial_size()[i]);
+  }
+  return absl::StrFormat(
+      "{count: %d feature_map_count: %d spatial: %s "
       "value_min: %f value_max: %f layout: %s}",
-      count_, feature_map_count_, height_, width_, value_min_, value_max_,
-      DataLayoutString(layout_).c_str());
+      count(), feature_map_count(), spatial, value_min_, value_max_,
+      DataLayoutString(layout()));
 }
 
-string BatchDescriptor::ToShortString() const {
+std::string BatchDescriptor::ToShortString() const {
   // All the constituent strings are less than 15 characters, so the
   // small string optimization ensures that there will be at most one
   // heap memory allocation.
-  string x = port::StrCat("x", width());
-  string y = port::StrCat("y", height());
-  string depth = port::StrCat("d", feature_map_count());
-  string batch = port::StrCat("b", count());
+  std::string depth = absl::StrCat("d", feature_map_count());
+  std::string batch = absl::StrCat("b", count());
 
-  string suffix;
+  std::string spatial = "s";
+  for (int i = 0; i < ndims(); i++) {
+    absl::StrAppendFormat(&spatial, "%d ", spatial_size()[i]);
+  }
+
+  std::string suffix;
   if (value_min() != value_max()) {
-    port::StrAppend(&suffix, "[", value_min(), ";", value_max(), "]");
+    absl::StrAppend(&suffix, "[", value_min(), ";", value_max(), "]");
   }
   if (quantized_activation_mode() == QuantizedActivationMode::k16Bit) {
     suffix += "_16bit";
@@ -153,27 +343,35 @@ string BatchDescriptor::ToShortString() const {
 
   switch (layout()) {
     case DataLayout::kYXDepthBatch:
-      return port::StrCat(y, x, depth, batch, suffix);
+      return absl::StrCat(spatial, depth, batch, suffix);
     case DataLayout::kYXBatchDepth:
-      return port::StrCat(y, x, batch, depth, suffix);
+      return absl::StrCat(spatial, batch, depth, suffix);
     case DataLayout::kBatchYXDepth:
-      return port::StrCat(batch, y, x, depth, suffix);
+      return absl::StrCat(batch, spatial, depth, suffix);
     case DataLayout::kBatchDepthYX:
-      return port::StrCat(batch, depth, y, x, suffix);
+      return absl::StrCat(batch, depth, spatial, suffix);
+    case DataLayout::kBatchDepthYX4:
+      return absl::StrCat(batch, depth, spatial, suffix, "(VECT_C)");
     default:
       LOG(FATAL) << "Unknown layout " << static_cast<int32>(layout());
       return "";  // Avoid return warning (unreachable)
   }
 }
 
-int64 BatchDescriptor::NodesPerFeatureMap() const { return width_ * height_; }
+int64 BatchDescriptor::NodesPerFeatureMap() const {
+  int64 ret = 1;
+  for (int i = 0; i < ndims(); i++) {
+    ret *= spatial_size()[i];
+  }
+  return ret;
+}
 
 int64 BatchDescriptor::NodesAcrossFeatureMaps() const {
-  return NodesPerFeatureMap() * feature_map_count_;
+  return NodesPerFeatureMap() * feature_map_count();
 }
 
 int64 BatchDescriptor::ElementCount() const {
-  return count_ * feature_map_count_ * height_ * width_;
+  return count() * feature_map_count() * NodesPerFeatureMap();
 }
 
 int64 BatchDescriptor::FullyConnectedWeightCount(
@@ -199,121 +397,183 @@ BatchDescriptor BatchDescriptor::DepthConcatenateOutputDescriptor(
   return output;
 }
 
+TensorDescriptorProto BatchDescriptor::ToProto(DataType data_type) const {
+  CHECK_EQ(0.0, value_max_);
+  CHECK_EQ(0.0, value_min_);
+  CHECK(quantized_activation_mode_ == QuantizedActivationMode::k8Bit);
+
+  TensorDescriptorProto ret = tensor_;
+  ret.set_data_type(data_type);
+  return ret;
+}
+
 // -- FilterDescriptor
 
-FilterDescriptor::FilterDescriptor()
-    : output_feature_map_count_(0),
-      input_feature_map_count_(0),
-      input_filter_height_(0),
-      input_filter_width_(0),
-      layout_(FilterLayout::kOutputInputYX) {}
+FilterDescriptor::FilterDescriptor(int ndims) {
+  tensor_.mutable_dimensions()->Resize(ndims + 2, 0);
+  set_layout(FilterLayout::kOutputInputYX);
+}
+
+FilterDescriptor::FilterDescriptor() : FilterDescriptor(/*ndims=*/2) {}
 
 FilterDescriptor::~FilterDescriptor() {}
 
 void FilterDescriptor::CloneFrom(const FilterDescriptor& other) {
-  set_output_feature_map_count(other.output_feature_map_count())
-      .set_input_feature_map_count(other.input_feature_map_count())
-      .set_input_filter_height(other.input_filter_height())
-      .set_input_filter_width(other.input_filter_width())
-      .set_layout(other.layout());
+  tensor_ = other.tensor_;
 }
 
-string FilterDescriptor::ToString() const {
-  return port::Printf(
-      "{output_feature_map_count: %lld input_feature_map_count: %lld "
-      "input_filter_height: %lld input_filter_width: %lld layout: %s}",
-      output_feature_map_count_, input_feature_map_count_, input_filter_height_,
-      input_filter_width_, FilterLayoutString(layout_).c_str());
+std::string FilterDescriptor::ToString() const {
+  std::string desc = absl::StrFormat(
+      "{output_feature_map_count: %d input_feature_map_count: %d "
+      "layout: %s shape: ",
+      output_feature_map_count(), input_feature_map_count(),
+      FilterLayoutString(layout()));
+  for (int i = 0; i < ndims(); i++) {
+    absl::StrAppendFormat(&desc, "%d ", input_filter_dims()[i]);
+  }
+  absl::StrAppend(&desc, "}");
+
+  return desc;
 }
 
-string FilterDescriptor::ToShortString() const {
+std::string FilterDescriptor::ToShortString() const {
   // All the constituent strings are less than 15 characters, so the
   // small string optimization ensures that there will be at most one
   // heap memory allocation.
-  string od = port::StrCat("od", output_feature_map_count_);
-  string id = port::StrCat("id", input_feature_map_count_);
-  string y = port::StrCat("y", input_filter_height_);
-  string x = port::StrCat("x", input_filter_width_);
+  std::string od = absl::StrCat("od", output_feature_map_count());
+  std::string id = absl::StrCat("id", input_feature_map_count());
 
-  switch (layout_) {
+  std::string spatial = "s";
+  for (int i = 0; i < ndims(); i++) {
+    absl::StrAppendFormat(&spatial, "%d ", input_filter_dims()[i]);
+  }
+
+  switch (layout()) {
     case FilterLayout::kOutputInputYX:
-      return port::StrCat(od, id, y, x);
+      return absl::StrCat(od, id, spatial);
+    case FilterLayout::kOutputYXInput:
+      return absl::StrCat(od, spatial, id);
+    case FilterLayout::kOutputInputYX4:
+      return absl::StrCat(od, id, spatial, "(VECT_C)");
     case FilterLayout::kInputYXOutput:
-      return port::StrCat(id, y, x, od);
+      return absl::StrCat(id, spatial, od);
     case FilterLayout::kYXInputOutput:
-      return port::StrCat(y, x, id, od);
+      return absl::StrCat(spatial, id, od);
     default:
-      LOG(FATAL) << "Unknown layout " << static_cast<int32>(layout_);
+      LOG(FATAL) << "Unknown layout " << static_cast<int32>(layout());
       return "";  // Avoid return warning (unreachable)
   }
 }
 
 int64 FilterDescriptor::ComputeWeightCount() const {
-  return output_feature_map_count_ * input_feature_map_count_ *
-         input_filter_height_ * input_filter_width_;
+  int64 ret = output_feature_map_count() * input_feature_map_count();
+  for (int i = 0; i < ndims(); i++) {
+    ret *= input_filter_dims()[i];
+  }
+  return ret;
+}
+
+TensorDescriptorProto FilterDescriptor::ToProto(DataType data_type) const {
+  TensorDescriptorProto ret = tensor_;
+  ret.set_data_type(data_type);
+  return ret;
 }
 
 // -- ConvolutionDescriptor
 
+ConvolutionDescriptor::ConvolutionDescriptor(int ndims) {
+  proto_.mutable_paddings()->Resize(ndims, 0);
+  proto_.mutable_strides()->Resize(ndims, 1);
+  proto_.mutable_dilations()->Resize(ndims, 1);
+  proto_.set_group_count(1);
+  proto_.set_convolution_mode(ConvolutionMode::CROSS_CORRELATION);
+}
+
 ConvolutionDescriptor::ConvolutionDescriptor()
-    : zero_padding_height_(0),
-      zero_padding_width_(0),
-      vertical_filter_stride_(1),
-      horizontal_filter_stride_(1) {}
+    : ConvolutionDescriptor(/*ndims=*/2) {}
 
 ConvolutionDescriptor::~ConvolutionDescriptor() {}
 
-string ConvolutionDescriptor::ToString() const {
-  return port::Printf(
-      "{zero_padding_height: %lld zero_padding_width: %lld "
-      "vertical_filter_stride: %lld horizontal_filter_stride: %lld}",
-      zero_padding_height_, zero_padding_width_, vertical_filter_stride_,
-      horizontal_filter_stride_);
+std::string ConvolutionDescriptor::ToString() const {
+  std::string padding;
+  std::string strides;
+  std::string dilations;
+  for (int i = 0; i < ndims(); i++) {
+    absl::StrAppendFormat(&padding, "%d ", this->padding()[i]);
+    absl::StrAppendFormat(&strides, "%d ", this->strides()[i]);
+    absl::StrAppendFormat(&dilations, "%d ", this->dilations()[i]);
+  }
+
+  return absl::StrFormat(
+      "{zero_padding: %s pad_alignment: %s filter_strides: %s dilation_rates: "
+      "%s}",
+      padding, PadAlignmentString(pad_alignment()), strides, dilations);
 }
 
-string ConvolutionDescriptor::ToShortString() const {
-  return port::StrCat("py:", zero_padding_height_, "_px:", zero_padding_width_,
-                      "_sy:", vertical_filter_stride_, "_sx:",
-                      horizontal_filter_stride_);
+std::string ConvolutionDescriptor::ToShortString() const {
+  std::string desc;
+  for (int i = 0; i < ndims(); i++) {
+    if (i > 0) absl::StrAppend(&desc, "_");
+    absl::StrAppendFormat(&desc, "p%d:%d", i, padding()[i]);
+  }
+  for (int i = 0; i < ndims(); i++) {
+    absl::StrAppendFormat(&desc, "_s%d:%d", i, strides()[i]);
+  }
+  for (int i = 0; i < ndims(); i++) {
+    absl::StrAppendFormat(&desc, "_d%d:%d", i, dilations()[i]);
+  }
+  return desc;
 }
 
 // -- PoolingDescriptor
 
-PoolingDescriptor::PoolingDescriptor()
+PoolingDescriptor::PoolingDescriptor(int ndims)
     : mode_(dnn::PoolingMode::kMaximum),
-      window_height_(0),
-      window_width_(0),
-      vertical_padding_(0),
-      horizontal_padding_(0),
-      vertical_stride_(0),
-      horizontal_stride_(0) {}
+      ndims_(ndims),
+      propagate_nans_(false),
+      window_(ndims, 0),
+      padding_(ndims, 0),
+      strides_(ndims, 1) {}
+
+PoolingDescriptor::PoolingDescriptor() : PoolingDescriptor(/*ndims=*/2) {}
 
 void PoolingDescriptor::CloneFrom(const PoolingDescriptor& other) {
   mode_ = other.mode_;
-  window_height_ = other.window_height_;
-  window_width_ = other.window_width_;
-  vertical_padding_ = other.vertical_padding_;
-  horizontal_padding_ = other.horizontal_padding_;
-  vertical_stride_ = other.vertical_stride_;
-  horizontal_stride_ = other.horizontal_stride_;
+  ndims_ = other.ndims_;
+  window_ = other.window_;
+  padding_ = other.padding_;
+  strides_ = other.strides_;
+  propagate_nans_ = other.propagate_nans_;
 }
 
-string PoolingDescriptor::ToString() const {
+std::string PoolingDescriptor::ToString() const {
   const char* mode_string =
       mode_ == dnn::PoolingMode::kMaximum ? "kMaximum" : "kAverage";
-  return port::Printf(
-      "{mode: %s window_height: %lld window_width: %lld vertical_stride: %lld "
-      "horizontal_stride: %lld vertical padding: %lld horizontal padding: "
-      "%lld}",
-      mode_string, window_height_, window_width_, vertical_stride_,
-      horizontal_stride_, vertical_padding_, horizontal_padding_);
+
+  std::string window, strides, padding;
+  for (int i = 0; i < ndims_; i++) {
+    absl::StrAppendFormat(&window, "%d ", window_[i]);
+    absl::StrAppendFormat(&strides, "%d ", strides_[i]);
+    absl::StrAppendFormat(&padding, "%d", padding_[i]);
+  }
+
+  const char* propagate_string = propagate_nans_ ? "Yes" : "No";
+
+  return absl::StrFormat(
+      "{mode: %s window: %s strides: %s padding: %s propagate NaNs: %s}",
+      mode_string, window, strides, padding, propagate_string);
 }
 
-string PoolingDescriptor::ToShortString() const {
-  return port::StrCat(mode_ == dnn::PoolingMode::kMaximum ? "max" : "avg",
-                      "_y:", window_height_, "_x:", window_width_, "_py:",
-                      vertical_padding_, "_px:", horizontal_padding_, "_sy:",
-                      vertical_stride_, "_sx:", horizontal_stride_);
+std::string PoolingDescriptor::ToShortString() const {
+  std::string window, strides, padding;
+  for (int i = 0; i < ndims_; i++) {
+    absl::StrAppendFormat(&window, "_w%d:%d", i, window_[i]);
+    absl::StrAppendFormat(&strides, "_s%d:%d", i, strides_[i]);
+    absl::StrAppendFormat(&padding, "_p%d:%d", i, padding_[i]);
+  }
+  return absl::StrCat(mode_ == dnn::PoolingMode::kMaximum ? "max" : "avg",
+                      window, strides, padding,
+                      propagate_nans_ ? "propagate_nans" : "ignore_nans");
 }
 
 // -- NormalizeDescriptor
@@ -335,19 +595,39 @@ void NormalizeDescriptor::CloneFrom(const NormalizeDescriptor& other) {
   segment_size_ = other.segment_size_;
 }
 
-string NormalizeDescriptor::ToString() const {
-  return port::Printf(
+std::string NormalizeDescriptor::ToString() const {
+  return absl::StrFormat(
       "{bias: %f range: %d alpha: %f beta: %f wrap_around: %d "
       "segment_size: %d}",
       bias_, range_, alpha_, beta_, wrap_around_, segment_size_);
 }
 
-string NormalizeDescriptor::ToShortString() const {
-  return port::StrCat("bias:", bias_, "_range:", range_, "_alpha:", alpha_,
-                      "_beta:", beta_, "_wrap:", wrap_around_, "_size:",
-                      segment_size_);
+std::string NormalizeDescriptor::ToShortString() const {
+  return absl::StrCat("bias:", bias_, "_range:", range_, "_alpha:", alpha_,
+                      "_beta:", beta_, "_wrap:", wrap_around_,
+                      "_size:", segment_size_);
+}
+
+bool DnnSupport::IsStatusOk(const port::Status& status, bool report_error) {
+  if (status.ok()) {
+    return true;
+  }
+  if (report_error) {
+    LOG(ERROR) << status.error_message();
+  }
+  return false;
+}
+
+port::Status DnnSupport::DoCtcLoss(
+    Stream* stream, dnn::DataType element_type,
+    const RnnStateTensorDescriptor& probs_desc,
+    const DeviceMemoryBase probs_data, absl::Span<const int> labels_data,
+    absl::Span<const int> labels_lengths_data,
+    absl::Span<const int> input_lengths_data, DeviceMemoryBase costs_data,
+    const RnnStateTensorDescriptor& grads_desc, DeviceMemoryBase grads_data,
+    DeviceMemory<uint8> scratch_memory, int ctc_loss_algo_id) {
+  return port::UnimplementedError("CtcLoss not implemented");
 }
 
 }  // namespace dnn
-}  // namespace gputools
-}  // namespace perftools
+}  // namespace stream_executor

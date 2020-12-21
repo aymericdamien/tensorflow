@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,8 +16,15 @@ limitations under the License.
 #include "tensorflow/core/kernels/cwise_ops_common.h"
 
 namespace tensorflow {
-REGISTER2(UnaryOp, CPU, "IsFinite", functor::isfinite, float, double);
-#if GOOGLE_CUDA
-REGISTER2(UnaryOp, GPU, "IsFinite", functor::isfinite, float, double);
+REGISTER3(UnaryOp, CPU, "IsFinite", functor::isfinite, float, Eigen::half,
+          double);
+
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+REGISTER3(UnaryOp, GPU, "IsFinite", functor::isfinite, float, Eigen::half,
+          double);
 #endif
+
+#ifdef TENSORFLOW_USE_SYCL
+REGISTER2(UnaryOp, SYCL, "IsFinite", functor::isfinite, float, double);
+#endif  // TENSORFLOW_USE_SYCL
 }  // namespace tensorflow

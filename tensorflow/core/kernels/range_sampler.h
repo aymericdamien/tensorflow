@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,19 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_KERNELS_RANGE_SAMPLER_H_
-#define TENSORFLOW_KERNELS_RANGE_SAMPLER_H_
+#ifndef TENSORFLOW_CORE_KERNELS_RANGE_SAMPLER_H_
+#define TENSORFLOW_CORE_KERNELS_RANGE_SAMPLER_H_
 
 #include <vector>
 
+#include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/lib/gtl/array_slice.h"
 #include "tensorflow/core/lib/random/distribution_sampler.h"
 #include "tensorflow/core/lib/random/random_distributions.h"
 #include "tensorflow/core/lib/random/weighted_picker.h"
 #include "tensorflow/core/platform/logging.h"
-#include "tensorflow/core/platform/port.h"
+#include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/thread_annotations.h"
-#include "tensorflow/core/public/status.h"
+#include "tensorflow/core/platform/types.h"
 
 namespace tensorflow {
 
@@ -35,7 +36,7 @@ class Env;
 // [0, range)
 class RangeSampler {
  public:
-  explicit RangeSampler(int range) : range_(range) { CHECK_GT(range_, 0); }
+  explicit RangeSampler(int64 range) : range_(range) { CHECK_GT(range_, 0); }
   virtual ~RangeSampler();
 
   // Sample a single value
@@ -64,7 +65,7 @@ class RangeSampler {
   // Expected counts for the elements of the returned "batch" are reported
   // in the aligned array "batch_expected_count".
   //
-  // The user can optionally provide "extras", containg values in the range.
+  // The user can optionally provide "extras", containing values in the range.
   // The expected counts for the extras are reported in the aligned array
   // "extras_expected_count".
   //
@@ -114,10 +115,12 @@ class AllSampler : public RangeSampler {
 
   int64 Sample(random::SimplePhilox* rnd) const override {
     LOG(FATAL) << "Should not be called";
+    return 0;
   }
 
   float Probability(int64 value) const override {
     LOG(FATAL) << "Should not be called";
+    return 0;
   }
 
   void SampleBatchGetExpectedCountAvoid(
@@ -127,9 +130,6 @@ class AllSampler : public RangeSampler {
       gtl::ArraySlice<int64> extras,
       gtl::MutableArraySlice<float> extras_expected_count,
       gtl::ArraySlice<int64> avoided_values) const override;
-
- private:
-  const float inv_range_;
 };
 
 class UniformSampler : public RangeSampler {
@@ -187,7 +187,7 @@ class UnigramSampler : public RangeSampler {
 
   float Probability(int64 value) const override;
 
-  // Overriding at a high level results in far fewer lock aquisitions.
+  // Overriding at a high level results in far fewer lock acquisitions.
   void SampleBatchGetExpectedCountAvoid(
       random::SimplePhilox* rnd, bool unique,
       gtl::MutableArraySlice<int64> batch,
@@ -200,7 +200,7 @@ class UnigramSampler : public RangeSampler {
   void Update(gtl::ArraySlice<int64> values) override;
 
  private:
-  ThreadUnsafeUnigramSampler unsafe_sampler_ GUARDED_BY(mu_);
+  ThreadUnsafeUnigramSampler unsafe_sampler_ TF_GUARDED_BY(mu_);
   mutable mutex mu_;
 };
 
@@ -249,4 +249,4 @@ class FixedUnigramSampler : public RangeSampler {
 
 }  // namespace tensorflow
 
-#endif  // TENSORFLOW_KERNELS_RANGE_SAMPLER_H_
+#endif  // TENSORFLOW_CORE_KERNELS_RANGE_SAMPLER_H_

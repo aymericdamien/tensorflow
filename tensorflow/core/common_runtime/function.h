@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,91 +13,61 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMMON_RUNTIME_FUNCTION_H_
-#define TENSORFLOW_COMMON_RUNTIME_FUNCTION_H_
+#ifndef TENSORFLOW_CORE_COMMON_RUNTIME_FUNCTION_H_
+#define TENSORFLOW_CORE_COMMON_RUNTIME_FUNCTION_H_
 
 #include <functional>
+#include <memory>
 
+#include "absl/types/optional.h"
 #include "tensorflow/core/common_runtime/device.h"
+#include "tensorflow/core/common_runtime/device_mgr.h"
+#include "tensorflow/core/common_runtime/function_body.h"
+#include "tensorflow/core/common_runtime/function_def_utils.h"
+#include "tensorflow/core/common_runtime/function_utils.h"
+#include "tensorflow/core/common_runtime/graph_optimizer.h"
+#include "tensorflow/core/common_runtime/inline_function_utils.h"
+#include "tensorflow/core/common_runtime/process_function_library_runtime.h"
 #include "tensorflow/core/framework/function.h"
 #include "tensorflow/core/graph/graph.h"
+#include "tensorflow/core/protobuf/config.pb.h"
 
 namespace tensorflow {
 
+// Get default customizable kernel creator if set
+const CustomKernelCreator* GetDefaultCustomKernelCreator();
+
+// Registers a default customizable kernel creator for a function call.
+//
+// If c->CanCreateKernel returns false, we still fall back to an executor-based
+// interpreter op kernel to execute a function. Else c->CreateKernel() can be
+// used to create a kernel that will compile the function with XLA and run the
+// resulting program.
+//
+// TODO(zhifengc/phawkins): b/32379046
+void RegisterDefaultCustomKernelCreator(CustomKernelCreator* c);
+
 // Creates a FunctionLibraryRuntime, which instantiates functions
 // defined in "lib_def" and executes functions on the "device".
+// "device_mgr" must contain the "device". If not nullptr,
+// "custom_kernel_creator" is consulted by the returned runtime to
+// create kernels.
 //
 // The returned object does not take ownerships of "device" or
 // "lib_def".  The caller must ensure "device" and "lib_def" outlives
 // the returned object.
-typedef std::function<void()> Closure;
-typedef std::function<void(Closure)> Runner;
-FunctionLibraryRuntime* NewFunctionLibraryRuntime(
-    Device* device, Runner runner, int graph_def_version,
-    const FunctionLibraryDefinition* lib_def);
-
-// FunctionLibraryRuntime::GetFunctionBody returns a description of an
-// instantiated function that is represented as a Graph with arg/ret
-// nodes annotated.
-struct FunctionBody {
-  FunctionDef fdef;
-  Graph* graph = nullptr;  // owned.
-  DataTypeVector arg_types;
-  DataTypeVector ret_types;
-  gtl::InlinedVector<Node*, 4> arg_nodes;
-  gtl::InlinedVector<Node*, 4> ret_nodes;
-
-  FunctionBody() {}
-  FunctionBody(const FunctionDef& f, DataTypeSlice arg_types,
-               DataTypeSlice ret_types, Graph* g);
-  ~FunctionBody();
-};
-
-// Debugging facility.  Returns a debug string for a graph
-// representing an instantiated function.
-string DebugString(const Graph* instantiated_func_graph);
-
-// A few hand-crafted optimization on the instantiated function body
-// (a Graph*).
-
-// Removes nodes that are
-//   1. not stateful; and
-//   2. not _Arg; and
-//   3. not reachable from _Retval.
-// Returns true iff any node is removed from "g".
-bool RemoveDeadNodes(Graph* g);
-
-// Find a pattern:
-//   src -(in)-> node -(out)-> dst, where
-// 1) node is an identity node;
-// 2) in is the only incoming data edge;
-// 3) out is the only outgoing data edge;
 //
-// Rewrites the above pattern with src->dst and relevant data
-// dependencies updated. Repeat the process until no such pattern
-// left.
-bool RemoveIdentityNodes(Graph* g);
-
-// Rewrites _ListToArray and _ArrayToList to a set of Identity nodes.
-bool RemoveListArrayConverter(Graph* g);
-
-// For each node in "graph", if "lib" indicates that the node is a
-// function call, inline the function body.  Returns true if at least
-// one node is inlined.
-//
-// This routine goes through "graph" nodes once and applies the
-// inlining.  The caller may decide to apply the inlining on "graph"
-// multiple times by calling ExpandInlineFunctions a few times.
-bool ExpandInlineFunctions(FunctionLibraryRuntime* lib, Graph* graph);
-
-// Applies graph rewrite optimzation such as inlining, dead code
-// removal, etc.
-//
-// **g is a graph constructed based on the runtime library 'lib'.
-// OptimizeGraph mutates **g extensively and replaces '*g' with a
-// complete copy. Therefore, the caller should not keep any references
-// to nodes *g.
-void OptimizeGraph(FunctionLibraryRuntime* lib, Graph** g);
+// The "parent" is a pointer to the ProcessFunctionLibraryRuntime object that
+// typically owns the created FunctionLibraryRuntime object. The parent pointer
+// is not owned by the FunctionLibraryRuntime object.
+std::unique_ptr<FunctionLibraryRuntime> NewFunctionLibraryRuntime(
+    const DeviceMgr* device_mgr, Env* env, const ConfigProto* config,
+    Device* device, int graph_def_version,
+    const FunctionLibraryDefinition* lib_def, thread::ThreadPool* thread_pool,
+    const OptimizerOptions& optimizer_options,
+    const CustomKernelCreator* custom_kernel_creator,
+    const SessionMetadata* session_metadata,
+    ProcessFunctionLibraryRuntime* parent);
 
 // Given a numerical function "f", returns another numerical function
 // "g", such that if "f" takes N inputs and produces M outputs, "g"
@@ -109,8 +79,8 @@ void OptimizeGraph(FunctionLibraryRuntime* lib, Graph** g);
 // where L is a scalar-value function of (...x_i...).
 //
 // TODO(zhifengc): Asks math expert to say the comment again.
-FunctionBody* SymbolicGradient(const FunctionBody& f);
+std::unique_ptr<FunctionBody> SymbolicGradient(const FunctionBody& f);
 
 }  // end namespace tensorflow
 
-#endif  // TENSORFLOW_COMMON_RUNTIME_FUNCTION_H_
+#endif  // TENSORFLOW_CORE_COMMON_RUNTIME_FUNCTION_H_

@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,13 +15,32 @@ limitations under the License.
 
 #include "tensorflow/core/lib/core/coding.h"
 
-#include <gtest/gtest.h>
+#include <vector>
+#include "tensorflow/core/platform/test.h"
 
 namespace tensorflow {
 namespace core {
 
+TEST(Coding, Fixed16) {
+  static const uint16 N = 50000;
+
+  string s;
+  for (uint16 v = 0; v < N; v++) {
+    char buf[sizeof(uint16)];
+    EncodeFixed16(buf, v);
+    s.append(buf, sizeof(buf));
+  }
+
+  const char* p = s.data();
+  for (uint16 v = 0; v < N; v++) {
+    uint16 actual = DecodeFixed16(p);
+    ASSERT_EQ(v, actual);
+    p += sizeof(uint16);
+  }
+}
+
 TEST(Coding, Fixed32) {
-  static const int N = 100000;
+  static const uint32 N = 100000;
 
   string s;
   for (uint32 v = 0; v < N; v++) {
@@ -72,6 +91,10 @@ TEST(Coding, Fixed64) {
 // Test that encoding routines generate little-endian encodings
 TEST(Coding, EncodingOutput) {
   char dst[8];
+  EncodeFixed16(dst, 0x0201);
+  ASSERT_EQ(0x01, static_cast<int>(dst[0]));
+  ASSERT_EQ(0x02, static_cast<int>(dst[1]));
+
   EncodeFixed32(dst, 0x04030201);
   ASSERT_EQ(0x01, static_cast<int>(dst[0]));
   ASSERT_EQ(0x02, static_cast<int>(dst[1]));
@@ -102,7 +125,7 @@ TEST(Coding, Varint32) {
     uint32 expected = (i / 32) << (i % 32);
     uint32 actual;
     p = GetVarint32Ptr(p, limit, &actual);
-    ASSERT_TRUE(p != NULL);
+    ASSERT_TRUE(p != nullptr);
     ASSERT_EQ(expected, actual);
   }
   ASSERT_EQ(p, s.data() + s.size());
@@ -135,7 +158,7 @@ TEST(Coding, Varint64) {
     ASSERT_TRUE(p < limit);
     uint64 actual;
     p = GetVarint64Ptr(p, limit, &actual);
-    ASSERT_TRUE(p != NULL);
+    ASSERT_TRUE(p != nullptr);
     ASSERT_EQ(values[i], actual);
   }
   ASSERT_EQ(p, limit);
@@ -145,7 +168,7 @@ TEST(Coding, Varint32Overflow) {
   uint32 result;
   string input("\x81\x82\x83\x84\x85\x11");
   ASSERT_TRUE(GetVarint32Ptr(input.data(), input.data() + input.size(),
-                             &result) == NULL);
+                             &result) == nullptr);
 }
 
 TEST(Coding, Varint32Truncation) {
@@ -154,9 +177,10 @@ TEST(Coding, Varint32Truncation) {
   PutVarint32(&s, large_value);
   uint32 result;
   for (size_t len = 0; len < s.size() - 1; len++) {
-    ASSERT_TRUE(GetVarint32Ptr(s.data(), s.data() + len, &result) == NULL);
+    ASSERT_TRUE(GetVarint32Ptr(s.data(), s.data() + len, &result) == nullptr);
   }
-  ASSERT_TRUE(GetVarint32Ptr(s.data(), s.data() + s.size(), &result) != NULL);
+  ASSERT_TRUE(GetVarint32Ptr(s.data(), s.data() + s.size(), &result) !=
+              nullptr);
   ASSERT_EQ(large_value, result);
 }
 
@@ -164,7 +188,7 @@ TEST(Coding, Varint64Overflow) {
   uint64 result;
   string input("\x81\x82\x83\x84\x85\x81\x82\x83\x84\x85\x11");
   ASSERT_TRUE(GetVarint64Ptr(input.data(), input.data() + input.size(),
-                             &result) == NULL);
+                             &result) == nullptr);
 }
 
 TEST(Coding, Varint64Truncation) {
@@ -173,9 +197,10 @@ TEST(Coding, Varint64Truncation) {
   PutVarint64(&s, large_value);
   uint64 result;
   for (size_t len = 0; len < s.size() - 1; len++) {
-    ASSERT_TRUE(GetVarint64Ptr(s.data(), s.data() + len, &result) == NULL);
+    ASSERT_TRUE(GetVarint64Ptr(s.data(), s.data() + len, &result) == nullptr);
   }
-  ASSERT_TRUE(GetVarint64Ptr(s.data(), s.data() + s.size(), &result) != NULL);
+  ASSERT_TRUE(GetVarint64Ptr(s.data(), s.data() + s.size(), &result) !=
+              nullptr);
   ASSERT_EQ(large_value, result);
 }
 

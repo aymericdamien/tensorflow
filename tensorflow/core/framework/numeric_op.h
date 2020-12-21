@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,38 +12,22 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#ifndef TENSORFLOW_CORE_FRAMEWORK_NUMERIC_OP_H_
+#define TENSORFLOW_CORE_FRAMEWORK_NUMERIC_OP_H_
 
-#ifndef TENSORFLOW_FRAMEWORK_NUMERIC_OP_H_
-#define TENSORFLOW_FRAMEWORK_NUMERIC_OP_H_
-
+#include "tensorflow/core/framework/numeric_op_base.h"
 #include "tensorflow/core/framework/op_kernel.h"
-#include "tensorflow/core/framework/types.h"
-#include "tensorflow/core/framework/types.pb.h"
+#include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/lib/core/errors.h"
-#include "tensorflow/core/public/status.h"
-#include "tensorflow/core/public/tensor.h"
+#include "tensorflow/core/lib/core/status.h"
 
 namespace tensorflow {
 
-// One input and one output, both the same type.
 template <class T>
-class UnaryOp : public OpKernel {
- public:
-  explicit UnaryOp(OpKernelConstruction* context) : OpKernel(context) {
-    const DataType dt = DataTypeToEnum<T>::v();
-    OP_REQUIRES_OK(context, context->MatchSignature({dt}, {dt}));
-  }
-};
+using UnaryOp = UnaryOpBase<T, OpKernel, OpKernelConstruction>;
 
-// Two inputs and one output, all the same type.
 template <class T>
-class BinaryOp : public OpKernel {
- public:
-  explicit BinaryOp(OpKernelConstruction* context) : OpKernel(context) {
-    const DataType dt = DataTypeToEnum<T>::v();
-    OP_REQUIRES_OK(context, context->MatchSignature({dt, dt}, {dt}));
-  }
-};
+using BinaryOp = BinaryOpBase<T, OpKernel, OpKernelConstruction>;
 
 // For operations where the input and output are the same shape.
 //
@@ -56,9 +40,9 @@ class UnaryElementWiseOp : public UnaryOp<T> {
   void Compute(OpKernelContext* context) override {
     // Output shape is the same as input shape.
     const Tensor& input = context->input(0);
-    Tensor* output;
-    OP_REQUIRES_OK(context,
-                   context->allocate_output(0, input.shape(), &output));
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+                                {0}, 0, input.shape(), &output));
     static_cast<CHILD*>(this)->Operate(context, input, output);
   }
 };
@@ -77,8 +61,9 @@ class BinaryElementWiseOp : public BinaryOp<T> {
       return;
     }
 
-    Tensor* output;
-    OP_REQUIRES_OK(context, context->allocate_output(0, a.shape(), &output));
+    Tensor* output = nullptr;
+    OP_REQUIRES_OK(context, context->forward_input_or_allocate_output(
+                                {0, 1}, 0, a.shape(), &output));
 
     // Dispatch to the descendant's Operate() function.
     switch (a.dims()) {
@@ -88,6 +73,7 @@ class BinaryElementWiseOp : public BinaryOp<T> {
     break;                                                                     \
   }
 
+      NDIM_CASE(0);
       NDIM_CASE(1);
       NDIM_CASE(2);
       NDIM_CASE(3);
@@ -99,7 +85,7 @@ class BinaryElementWiseOp : public BinaryOp<T> {
 #undef NDIM_CASE
 
       default:
-        context->SetStatus(errors::OutOfRange(
+        context->SetStatus(errors::InvalidArgument(
             "We only handle up to Tensor::dims() up to 8, not ", a.dims()));
         break;
     }
@@ -108,4 +94,4 @@ class BinaryElementWiseOp : public BinaryOp<T> {
 
 }  // namespace tensorflow
 
-#endif  // TENSORFLOW_FRAMEWORK_NUMERIC_OP_H_
+#endif  // TENSORFLOW_CORE_FRAMEWORK_NUMERIC_OP_H_

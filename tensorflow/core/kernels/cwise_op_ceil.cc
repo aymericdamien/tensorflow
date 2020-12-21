@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,8 +16,13 @@ limitations under the License.
 #include "tensorflow/core/kernels/cwise_ops_common.h"
 
 namespace tensorflow {
-REGISTER2(UnaryOp, CPU, "Ceil", functor::ceil, float, double);
-#if GOOGLE_CUDA
-REGISTER2(UnaryOp, GPU, "Ceil", functor::ceil, float, double);
+REGISTER3(UnaryOp, CPU, "Ceil", functor::ceil, float, Eigen::half, double);
+
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+REGISTER3(UnaryOp, GPU, "Ceil", functor::ceil, float, Eigen::half, double);
 #endif
+
+#if TENSORFLOW_USE_SYCL
+REGISTER2(UnaryOp, SYCL, "Ceil", functor::ceil, float, double);
+#endif  // TENSORFLOW_USE_SYCL
 }  // namespace tensorflow

@@ -1,4 +1,4 @@
-# Copyright 2015 Google Inc. All Rights Reserved.
+# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-
 """Tests for python.util.protobuf.compare."""
 
 from __future__ import absolute_import
@@ -23,12 +22,13 @@ import copy
 import re
 import textwrap
 
-from tensorflow.python.platform import googletest
-from tensorflow.python.util.protobuf import compare
-from tensorflow.python.util.protobuf import compare_test_pb2
 import six
 
 from google.protobuf import text_format
+
+from tensorflow.python.platform import googletest
+from tensorflow.python.util.protobuf import compare
+from tensorflow.python.util.protobuf import compare_test_pb2
 
 
 def LargePbs(*args):
@@ -47,53 +47,53 @@ class ProtoEqTest(googletest.TestCase):
   def assertNotEquals(self, a, b):
     """Asserts that ProtoEq says a != b."""
     a, b = LargePbs(a, b)
-    googletest.TestCase.assertEquals(self, compare.ProtoEq(a, b), False)
+    googletest.TestCase.assertEqual(self, compare.ProtoEq(a, b), False)
 
-  def assertEquals(self, a, b):
+  def assertEqual(self, a, b):
     """Asserts that ProtoEq says a == b."""
     a, b = LargePbs(a, b)
-    googletest.TestCase.assertEquals(self, compare.ProtoEq(a, b), True)
+    googletest.TestCase.assertEqual(self, compare.ProtoEq(a, b), True)
 
   def testPrimitives(self):
     googletest.TestCase.assertEqual(self, True, compare.ProtoEq('a', 'a'))
     googletest.TestCase.assertEqual(self, False, compare.ProtoEq('b', 'a'))
 
   def testEmpty(self):
-    self.assertEquals('', '')
+    self.assertEqual('', '')
 
   def testPrimitiveFields(self):
     self.assertNotEquals('string_: "a"', '')
-    self.assertEquals('string_: "a"', 'string_: "a"')
+    self.assertEqual('string_: "a"', 'string_: "a"')
     self.assertNotEquals('string_: "b"', 'string_: "a"')
     self.assertNotEquals('string_: "ab"', 'string_: "aa"')
 
     self.assertNotEquals('int64_: 0', '')
-    self.assertEquals('int64_: 0', 'int64_: 0')
+    self.assertEqual('int64_: 0', 'int64_: 0')
     self.assertNotEquals('int64_: -1', '')
     self.assertNotEquals('int64_: 1', 'int64_: 0')
     self.assertNotEquals('int64_: 0', 'int64_: -1')
 
     self.assertNotEquals('float_: 0.0', '')
-    self.assertEquals('float_: 0.0', 'float_: 0.0')
+    self.assertEqual('float_: 0.0', 'float_: 0.0')
     self.assertNotEquals('float_: -0.1', '')
     self.assertNotEquals('float_: 3.14', 'float_: 0')
     self.assertNotEquals('float_: 0', 'float_: -0.1')
-    self.assertEquals('float_: -0.1', 'float_: -0.1')
+    self.assertEqual('float_: -0.1', 'float_: -0.1')
 
     self.assertNotEquals('bool_: true', '')
     self.assertNotEquals('bool_: false', '')
     self.assertNotEquals('bool_: true', 'bool_: false')
-    self.assertEquals('bool_: false', 'bool_: false')
-    self.assertEquals('bool_: true', 'bool_: true')
+    self.assertEqual('bool_: false', 'bool_: false')
+    self.assertEqual('bool_: true', 'bool_: true')
 
     self.assertNotEquals('enum_: A', '')
     self.assertNotEquals('enum_: B', 'enum_: A')
     self.assertNotEquals('enum_: C', 'enum_: B')
-    self.assertEquals('enum_: C', 'enum_: C')
+    self.assertEqual('enum_: C', 'enum_: C')
 
   def testRepeatedPrimitives(self):
     self.assertNotEquals('int64s: 0', '')
-    self.assertEquals('int64s: 0', 'int64s: 0')
+    self.assertEqual('int64s: 0', 'int64s: 0')
     self.assertNotEquals('int64s: 1', 'int64s: 0')
     self.assertNotEquals('int64s: 0 int64s: 0', '')
     self.assertNotEquals('int64s: 0 int64s: 0', 'int64s: 0')
@@ -101,8 +101,8 @@ class ProtoEqTest(googletest.TestCase):
     self.assertNotEquals('int64s: 0 int64s: 1', 'int64s: 0')
     self.assertNotEquals('int64s: 1', 'int64s: 0 int64s: 2')
     self.assertNotEquals('int64s: 2 int64s: 0', 'int64s: 1')
-    self.assertEquals('int64s: 0 int64s: 0', 'int64s: 0 int64s: 0')
-    self.assertEquals('int64s: 0 int64s: 1', 'int64s: 0 int64s: 1')
+    self.assertEqual('int64s: 0 int64s: 0', 'int64s: 0 int64s: 0')
+    self.assertEqual('int64s: 0 int64s: 1', 'int64s: 0 int64s: 1')
     self.assertNotEquals('int64s: 1 int64s: 0', 'int64s: 0 int64s: 0')
     self.assertNotEquals('int64s: 1 int64s: 0', 'int64s: 0 int64s: 1')
     self.assertNotEquals('int64s: 1 int64s: 0', 'int64s: 0 int64s: 2')
@@ -111,10 +111,10 @@ class ProtoEqTest(googletest.TestCase):
 
   def testMessage(self):
     self.assertNotEquals('small <>', '')
-    self.assertEquals('small <>', 'small <>')
+    self.assertEqual('small <>', 'small <>')
     self.assertNotEquals('small < strings: "a" >', '')
     self.assertNotEquals('small < strings: "a" >', 'small <>')
-    self.assertEquals('small < strings: "a" >', 'small < strings: "a" >')
+    self.assertEqual('small < strings: "a" >', 'small < strings: "a" >')
     self.assertNotEquals('small < strings: "b" >', 'small < strings: "a" >')
     self.assertNotEquals('small < strings: "a" strings: "b" >',
                          'small < strings: "a" >')
@@ -124,11 +124,11 @@ class ProtoEqTest(googletest.TestCase):
     self.assertNotEquals('string_: "a"', 'small < strings: "b" strings: "c" >')
     self.assertNotEquals('string_: "a" small <>', 'small <>')
     self.assertNotEquals('string_: "a" small <>', 'small < strings: "b" >')
-    self.assertEquals('string_: "a" small <>', 'string_: "a" small <>')
+    self.assertEqual('string_: "a" small <>', 'string_: "a" small <>')
     self.assertNotEquals('string_: "a" small < strings: "a" >',
                          'string_: "a" small <>')
-    self.assertEquals('string_: "a" small < strings: "a" >',
-                      'string_: "a" small < strings: "a" >')
+    self.assertEqual('string_: "a" small < strings: "a" >',
+                     'string_: "a" small < strings: "a" >')
     self.assertNotEquals('string_: "a" small < strings: "a" >',
                          'int64_: 1 small < strings: "a" >')
     self.assertNotEquals('string_: "a" small < strings: "a" >', 'int64_: 1')
@@ -137,18 +137,18 @@ class ProtoEqTest(googletest.TestCase):
                          'int64_: 1 small < strings: "a" >')
     self.assertNotEquals('string_: "a" int64_: 1 small < strings: "a" >',
                          'string_: "a" int64_: 0 small < strings: "a" >')
-    self.assertEquals('string_: "a" int64_: 0 small < strings: "a" >',
-                      'string_: "a" int64_: 0 small < strings: "a" >')
+    self.assertEqual('string_: "a" int64_: 0 small < strings: "a" >',
+                     'string_: "a" int64_: 0 small < strings: "a" >')
 
   def testNestedMessage(self):
     self.assertNotEquals('medium <>', '')
-    self.assertEquals('medium <>', 'medium <>')
+    self.assertEqual('medium <>', 'medium <>')
     self.assertNotEquals('medium < smalls <> >', 'medium <>')
-    self.assertEquals('medium < smalls <> >', 'medium < smalls <> >')
-    self.assertNotEquals(
-        'medium < smalls <> smalls <> >', 'medium < smalls <> >')
-    self.assertEquals('medium < smalls <> smalls <> >',
-                      'medium < smalls <> smalls <> >')
+    self.assertEqual('medium < smalls <> >', 'medium < smalls <> >')
+    self.assertNotEquals('medium < smalls <> smalls <> >',
+                         'medium < smalls <> >')
+    self.assertEqual('medium < smalls <> smalls <> >',
+                     'medium < smalls <> smalls <> >')
 
     self.assertNotEquals('medium < int32s: 0 >', 'medium < smalls <> >')
 
@@ -172,12 +172,12 @@ class ProtoEqTest(googletest.TestCase):
                          '             int64_: 1            ')
     self.assertNotEquals('string_: "b" int64_: 1            ',
                          'string_: "a" int64_: 2            ')
-    self.assertEquals('string_: "a" int64_: 1            ',
-                      'string_: "a" int64_: 1            ')
+    self.assertEqual('string_: "a" int64_: 1            ',
+                     'string_: "a" int64_: 1            ')
     self.assertNotEquals('string_: "a" int64_: 1 float_: 0.0',
                          'string_: "a" int64_: 1            ')
-    self.assertEquals('string_: "a" int64_: 1 float_: 0.0',
-                      'string_: "a" int64_: 1 float_: 0.0')
+    self.assertEqual('string_: "a" int64_: 1 float_: 0.0',
+                     'string_: "a" int64_: 1 float_: 0.0')
     self.assertNotEquals('string_: "a" int64_: 1 float_: 0.1',
                          'string_: "a" int64_: 1 float_: 0.0')
     self.assertNotEquals('string_: "a" int64_: 2 float_: 0.0',
@@ -189,14 +189,13 @@ class ProtoEqTest(googletest.TestCase):
     self.assertNotEquals('string_: "b"           float_: 0.0',
                          'string_: "a" int64_: 1            ')
 
-    self.assertNotEquals('string_: "a"',
-                         'small < strings: "a" >')
+    self.assertNotEquals('string_: "a"', 'small < strings: "a" >')
     self.assertNotEquals('string_: "a" small < strings: "a" >',
                          'small < strings: "b" >')
     self.assertNotEquals('string_: "a" small < strings: "b" >',
                          'string_: "a" small < strings: "a" >')
-    self.assertEquals('string_: "a" small < strings: "a" >',
-                      'string_: "a" small < strings: "a" >')
+    self.assertEqual('string_: "a" small < strings: "a" >',
+                     'string_: "a" small < strings: "a" >')
 
     self.assertNotEquals('string_: "a" medium <>',
                          'string_: "a" small < strings: "a" >')
@@ -270,6 +269,7 @@ class NormalizeNumbersTest(googletest.TestCase):
 
 class AssertTest(googletest.TestCase):
   """Tests assertProtoEqual()."""
+
   def assertProtoEqual(self, a, b, **kwargs):
     if isinstance(a, six.string_types) and isinstance(b, six.string_types):
       a, b = LargePbs(a, b)
@@ -286,8 +286,8 @@ class AssertTest(googletest.TestCase):
   def assertNone(self, a, b, message, **kwargs):
     """Checks that all possible asserts fail with the given message."""
     message = re.escape(textwrap.dedent(message))
-    self.assertRaisesRegexp(AssertionError, message,
-                            self.assertProtoEqual, a, b, **kwargs)
+    self.assertRaisesRegex(AssertionError, message, self.assertProtoEqual, a, b,
+                           **kwargs)
 
   def testCheckInitialized(self):
     # neither is initialized
@@ -300,12 +300,14 @@ class AssertTest(googletest.TestCase):
     b = copy.deepcopy(a)
     a.required = 2
     self.assertNone(a, b, 'Initialization errors: ', check_initialized=True)
-    self.assertNone(a, b,
-                    """
+    self.assertNone(
+        a,
+        b,
+        """
                     - required: 2
                       optional: 1
                     """,
-                    check_initialized=False)
+        check_initialized=False)
 
     # both are initialized
     a = compare_test_pb2.Labeled()
@@ -328,13 +330,10 @@ class AssertTest(googletest.TestCase):
     pb = compare_test_pb2.Large()
     pb.string_ = 'abc'
     pb.float_ = 1.234
-    compare.assertProtoEqual(
-        self,
-        """
+    compare.assertProtoEqual(self, """
           string_: 'abc'
           float_: 1.234
-        """,
-        pb)
+        """, pb)
 
   def testNormalizesNumbers(self):
     pb1 = compare_test_pb2.Large()
@@ -352,9 +351,7 @@ class AssertTest(googletest.TestCase):
 
   def testPrimitives(self):
     self.assertAll('string_: "x"')
-    self.assertNone('string_: "x"',
-                    'string_: "y"',
-                    """
+    self.assertNone('string_: "x"', 'string_: "y"', """
                     - string_: "x"
                     ?           ^
                     + string_: "y"
@@ -372,15 +369,11 @@ class AssertTest(googletest.TestCase):
     self.assertSameNotEqual('int64s: 0 int64s: 1',
                             'int64s: 1 int64s: 0 int64s: 1')
 
-    self.assertNone('int64s: 0',
-                    'int64s: 0 int64s: 2',
-                    """
+    self.assertNone('int64s: 0', 'int64s: 0 int64s: 2', """
                       int64s: 0
                     + int64s: 2
                     """)
-    self.assertNone('int64s: 0 int64s: 1',
-                    'int64s: 0 int64s: 2',
-                    """
+    self.assertNone('int64s: 0 int64s: 1', 'int64s: 0 int64s: 2', """
                       int64s: 0
                     - int64s: 1
                     ?         ^
@@ -393,11 +386,11 @@ class AssertTest(googletest.TestCase):
     self.assertAll('medium: { smalls: {} }')
     self.assertAll('medium: { int32s: 1 smalls: {} }')
     self.assertAll('medium: { smalls: { strings: "x" } }')
-    self.assertAll('medium: { smalls: { strings: "x" } } small: { strings: "y" }')
+    self.assertAll(
+        'medium: { smalls: { strings: "x" } } small: { strings: "y" }')
 
-    self.assertSameNotEqual(
-        'medium: { smalls: { strings: "x" strings: "y" } }',
-        'medium: { smalls: { strings: "y" strings: "x" } }')
+    self.assertSameNotEqual('medium: { smalls: { strings: "x" strings: "y" } }',
+                            'medium: { smalls: { strings: "y" strings: "x" } }')
     self.assertSameNotEqual(
         'medium: { smalls: { strings: "x" } smalls: { strings: "y" } }',
         'medium: { smalls: { strings: "y" } smalls: { strings: "x" } }')
@@ -409,9 +402,7 @@ class AssertTest(googletest.TestCase):
         'medium: { smalls: { strings: "x" } int32s: 0 }',
         'medium: { int32s: 0 smalls: { strings: "x" } int32s: 0 }')
 
-    self.assertNone('medium: {}',
-                    'medium: { smalls: { strings: "x" } }',
-                    """
+    self.assertNone('medium: {}', 'medium: { smalls: { strings: "x" } }', """
                       medium {
                     +   smalls {
                     +     strings: "x"
@@ -419,17 +410,14 @@ class AssertTest(googletest.TestCase):
                       }
                     """)
     self.assertNone('medium: { smalls: { strings: "x" } }',
-                    'medium: { smalls: {} }',
-                    """
+                    'medium: { smalls: {} }', """
                       medium {
                         smalls {
                     -     strings: "x"
                         }
                       }
                     """)
-    self.assertNone('medium: { int32s: 0 }',
-                    'medium: { int32s: 1 }',
-                    """
+    self.assertNone('medium: { int32s: 0 }', 'medium: { int32s: 1 }', """
                       medium {
                     -   int32s: 0
                     ?           ^
@@ -439,11 +427,13 @@ class AssertTest(googletest.TestCase):
                     """)
 
   def testMsgPassdown(self):
-    self.assertRaisesRegexp(AssertionError, 'test message passed down',
-                            self.assertProtoEqual,
-                            'medium: {}',
-                            'medium: { smalls: { strings: "x" } }',
-                            msg='test message passed down')
+    self.assertRaisesRegex(
+        AssertionError,
+        'test message passed down',
+        self.assertProtoEqual,
+        'medium: {}',
+        'medium: { smalls: { strings: "x" } }',
+        msg='test message passed down')
 
   def testRepeatedMessage(self):
     self.assertAll('medium: { smalls: {} smalls: {} }')
@@ -462,17 +452,14 @@ class AssertTest(googletest.TestCase):
         'medium: { smalls: { strings: "x" } smalls: {} }',
         'medium: { smalls: {} smalls: { strings: "x" } smalls: {} }')
 
-    self.assertNone('medium: {}',
-                    'medium: {} medium { smalls: {} }',
-                    """
+    self.assertNone('medium: {}', 'medium: {} medium { smalls: {} }', """
                       medium {
                     +   smalls {
                     +   }
                       }
                     """)
     self.assertNone('medium: { smalls: {} smalls: { strings: "x" } }',
-                    'medium: { smalls: {} smalls: { strings: "y" } }',
-                    """
+                    'medium: { smalls: {} smalls: { strings: "y" } }', """
                       medium {
                         smalls {
                         }
@@ -492,12 +479,10 @@ class MixinTests(compare.ProtoAssertions, googletest.TestCase):
     pb = compare_test_pb2.Large()
     pb.string_ = 'abc'
     pb.float_ = 1.234
-    self.assertProtoEqual(
-        """
+    self.assertProtoEqual("""
           string_: 'abc'
           float_: 1.234
-        """,
-        pb)
+        """, pb)
 
 
 if __name__ == '__main__':

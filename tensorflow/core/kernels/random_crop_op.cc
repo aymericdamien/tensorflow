@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,9 +17,9 @@ limitations under the License.
 
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
+#include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/lib/random/simple_philox.h"
-#include "tensorflow/core/public/tensor.h"
 #include "tensorflow/core/util/guarded_philox_random.h"
 
 namespace tensorflow {
@@ -35,14 +35,14 @@ class RandomCropOp : public OpKernel {
     const Tensor& input = context->input(0);
     OP_REQUIRES(context, input.dims() == 3,
                 errors::InvalidArgument("input must be 3-dimensional",
-                                        input.shape().ShortDebugString()));
+                                        input.shape().DebugString()));
     const Tensor& shape_t = context->input(1);
     OP_REQUIRES(context, shape_t.dims() == 1,
                 errors::InvalidArgument("shape_t must be 1-dimensional",
-                                        shape_t.shape().ShortDebugString()));
+                                        shape_t.shape().DebugString()));
     OP_REQUIRES(context, shape_t.NumElements() == 2,
                 errors::InvalidArgument("shape_t must have two elements",
-                                        shape_t.shape().ShortDebugString()));
+                                        shape_t.shape().DebugString()));
 
     auto shape_vec = shape_t.vec<int64>();
     const int32 target_height = shape_vec(0);
@@ -68,10 +68,10 @@ class RandomCropOp : public OpKernel {
     // Edge case. The target dimensions are larger then the image, so
     // zero-pad the image. This guarantees that the image will *always*
     // be [target_height, target_width] in size.
-    OP_REQUIRES(
-        context, width >= target_width,
-        errors::FailedPrecondition("width must be >= target_width: width = ",
-                                   width, ", target_width = ", target_width));
+    OP_REQUIRES(context, width >= target_width,
+                errors::FailedPrecondition(
+                    "width must be >= target_width: width = ", width,
+                    ", target_width = ", target_width));
     OP_REQUIRES(context, height >= target_height,
                 errors::FailedPrecondition(
                     "height must be >= target_height: height = ", height,
@@ -92,8 +92,8 @@ class RandomCropOp : public OpKernel {
 
     // TODO(shlens): Do this more efficiently with memcpy once padding is
     // available for smaller images.
-    typename TTypes<T, 3>::ConstTensor input_data = input.tensor<T, 3>();
-    typename TTypes<T, 3>::Tensor output_data = output->tensor<T, 3>();
+    typename TTypes<T, 3>::ConstTensor input_data(input.tensor<T, 3>());
+    typename TTypes<T, 3>::Tensor output_data(output->tensor<T, 3>());
 
     for (int y = 0; y < target_height; ++y) {
       for (int x = 0; x < target_width; ++x) {

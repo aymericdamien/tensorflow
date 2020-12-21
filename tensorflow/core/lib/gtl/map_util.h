@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -21,11 +21,13 @@ limitations under the License.
 #define TENSORFLOW_LIB_GTL_MAP_UTIL_H_
 
 #include <stddef.h>
+
 #include <iterator>
 #include <memory>
 #include <string>
 #include <utility>
-#include <vector>
+
+#include "tensorflow/core/lib/gtl/subtle/map_traits.h"
 
 namespace tensorflow {
 namespace gtl {
@@ -93,6 +95,30 @@ const typename Collection::value_type::second_type& FindWithDefault(
   return it->second;
 }
 
+// Inserts the given key-value pair into the collection. Returns true if and
+// only if the key from the given pair didn't previously exist. Otherwise, the
+// value in the map is replaced with the value from the given pair.
+template <class Collection>
+bool InsertOrUpdate(Collection* const collection,
+                    const typename Collection::value_type& vt) {
+  std::pair<typename Collection::iterator, bool> ret = collection->insert(vt);
+  if (!ret.second) {
+    // update
+    ret.first->second = vt.second;
+    return false;
+  }
+  return true;
+}
+
+// Same as above, except that the key and value are passed separately.
+template <class Collection>
+bool InsertOrUpdate(Collection* const collection,
+                    const typename Collection::value_type::first_type& key,
+                    const typename Collection::value_type::second_type& value) {
+  return InsertOrUpdate(collection,
+                        typename Collection::value_type(key, value));
+}
+
 // Inserts the given key and value into the given collection if and only if the
 // given key did NOT already exist in the collection. If the key previously
 // existed in the collection, the value is not changed. Returns true if the
@@ -130,6 +156,57 @@ typename Collection::value_type::second_type& LookupOrInsert(
     const typename Collection::value_type::second_type& value) {
   return LookupOrInsert(collection,
                         typename Collection::value_type(key, value));
+}
+
+// Saves the reverse mapping into reverse. Returns true if values could all be
+// inserted.
+template <typename M, typename ReverseM>
+bool ReverseMap(const M& m, ReverseM* reverse) {
+  bool all_unique = true;
+  for (const auto& kv : m) {
+    if (!InsertOrUpdate(reverse, kv.second, kv.first)) {
+      all_unique = false;
+    }
+  }
+  return all_unique;
+}
+
+// Like ReverseMap above, but returns its output m. Return type has to
+// be specified explicitly. Example:
+// M::M(...) : m_(...), r_(ReverseMap<decltype(r_)>(m_)) {}
+template <typename ReverseM, typename M>
+ReverseM ReverseMap(const M& m) {
+  typename std::remove_const<ReverseM>::type reverse;
+  ReverseMap(m, &reverse);
+  return reverse;
+}
+
+// Erases the m item identified by the given key, and returns the value
+// associated with that key. It is assumed that the value (i.e., the
+// mapped_type) is a pointer. Returns null if the key was not found in the
+// m.
+//
+// Examples:
+//   std::map<string, MyType*> my_map;
+//
+// One line cleanup:
+//     delete EraseKeyReturnValuePtr(&my_map, "abc");
+//
+// Use returned value:
+//     std::unique_ptr<MyType> value_ptr(
+//         EraseKeyReturnValuePtr(&my_map, "abc"));
+//     if (value_ptr.get())
+//       value_ptr->DoSomething();
+//
+template <typename Collection>
+typename Collection::value_type::second_type EraseKeyReturnValuePtr(
+    Collection* collection,
+    const typename Collection::value_type::first_type& key) {
+  auto it = collection->find(key);
+  if (it == collection->end()) return nullptr;
+  auto v = gtl::subtle::GetMapped(*it);
+  collection->erase(it);
+  return v;
 }
 
 }  // namespace gtl

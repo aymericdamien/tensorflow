@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,15 +15,15 @@ limitations under the License.
 
 // The utility to read checkpoints for google brain tensor ops and v3
 // checkpoints for dist_belief.
-//
 
-#ifndef TENSORFLOW_UTIL_TENSOR_SLICE_READER_CACHE_H_
-#define TENSORFLOW_UTIL_TENSOR_SLICE_READER_CACHE_H_
+#ifndef TENSORFLOW_CORE_UTIL_TENSOR_SLICE_READER_CACHE_H_
+#define TENSORFLOW_CORE_UTIL_TENSOR_SLICE_READER_CACHE_H_
 
 #include <unordered_map>
 
-#include "tensorflow/core/platform/port.h"
-#include "tensorflow/core/public/status.h"
+#include "tensorflow/core/lib/core/status.h"
+#include "tensorflow/core/platform/mutex.h"
+#include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/util/tensor_slice_reader.h"
 
 namespace tensorflow {
@@ -85,4 +85,4 @@ class TensorSliceReaderCache {
 
 }  // namespace tensorflow
 
-#endif  // TENSORFLOW_UTIL_TENSOR_SLICE_READER_CACHE_H_
+#endif  // TENSORFLOW_CORE_UTIL_TENSOR_SLICE_READER_CACHE_H_

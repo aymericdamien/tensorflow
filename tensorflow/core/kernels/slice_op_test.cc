@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,22 +15,21 @@ limitations under the License.
 
 #include <functional>
 #include <memory>
-#include <vector>
 
-#include <gtest/gtest.h>
 #include "tensorflow/core/common_runtime/kernel_benchmark_testlib.h"
 #include "tensorflow/core/framework/allocator.h"
-#include "tensorflow/core/framework/graph.pb.h"
 #include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/framework/types.pb.h"
+#include "tensorflow/core/graph/algorithm.h"
 #include "tensorflow/core/graph/node_builder.h"
 #include "tensorflow/core/graph/testlib.h"
 #include "tensorflow/core/kernels/ops_testutil.h"
 #include "tensorflow/core/kernels/ops_util.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
+#include "tensorflow/core/platform/test.h"
 #include "tensorflow/core/platform/test_benchmark.h"
-#include "tensorflow/core/public/tensor.h"
 
 namespace tensorflow {
 namespace {
@@ -40,7 +39,6 @@ namespace {
 template <typename T>
 static void SliceHelper(int iters, int size) {
   testing::StopTiming();
-  RequireDefaultOps();
   Graph* g = new Graph(OpRegistry::Global());
   DataType dt = DataTypeToEnum<T>::v();
   int kDim = 100;
@@ -65,10 +63,14 @@ static void SliceHelper(int iters, int size) {
                   .Input(test::graph::Constant(g, sizes))
                   .Attr("T", dt)
                   .Finalize(g, &node));
+  FixupSourceAndSinkEdges(g);
 
   testing::BytesProcessed(static_cast<int64>(iters) * kDim * size * sizeof(T));
   testing::StartTiming();
-  test::Benchmark("cpu", g).Run(iters);
+  test::Benchmark("cpu", g, nullptr, nullptr, nullptr,
+                  "SINGLE_THREADED_EXECUTOR")
+      .Run(iters);
+
   testing::UseRealTime();
 }
 

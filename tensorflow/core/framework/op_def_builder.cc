@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,79 +15,92 @@ limitations under the License.
 
 #include "tensorflow/core/framework/op_def_builder.h"
 
+#include <limits>
+#include <vector>
+
+#include "absl/strings/escaping.h"
+#include "tensorflow/core/framework/attr_value.pb.h"
 #include "tensorflow/core/framework/attr_value_util.h"
 #include "tensorflow/core/framework/op_def_util.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/gtl/array_slice.h"
+#include "tensorflow/core/lib/strings/scanner.h"
 #include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/lib/strings/strcat.h"
-#include "tensorflow/core/platform/regexp.h"
+
+using ::tensorflow::strings::Scanner;
 
 namespace tensorflow {
 
 namespace {
 
-bool RE2Consume(StringPiece* sp, const RE2& pattern) {
-  RegexpStringPiece base_sp = ToRegexpStringPiece(*sp);
-  bool r = RE2::Consume(&base_sp, pattern);
-  *sp = FromRegexpStringPiece(base_sp);
-  return r;
-}
-
-bool RE2Consume(StringPiece* sp, const RE2& pattern, StringPiece* out) {
-  RegexpStringPiece base_sp = ToRegexpStringPiece(*sp);
-  RegexpStringPiece base_out;
-  bool r = RE2::Consume(&base_sp, pattern, &base_out);
-  *sp = FromRegexpStringPiece(base_sp);
-  *out = FromRegexpStringPiece(base_out);
-  return r;
-}
-
-bool RE2Consume(StringPiece* sp, const RE2& pattern, int64* out) {
-  RegexpStringPiece base_sp = ToRegexpStringPiece(*sp);
-  bool r = RE2::Consume(&base_sp, pattern, out);
-  *sp = FromRegexpStringPiece(base_sp);
-  return r;
-}
-
 string AttrError(StringPiece orig, const string& op_name) {
   return strings::StrCat(" from Attr(\"", orig, "\") for Op ", op_name);
 }
 
-const RE2& AttrNameRE() {
-  static RE2 pattern("([a-zA-Z][a-zA-Z0-9_]*)\\s*:\\s*");
-  return pattern;
+bool ConsumeAttrName(StringPiece* sp, StringPiece* out) {
+  return Scanner(*sp)
+      .One(Scanner::LETTER)
+      .Any(Scanner::LETTER_DIGIT_UNDERSCORE)
+      .StopCapture()
+      .AnySpace()
+      .OneLiteral(":")
+      .AnySpace()
+      .GetResult(sp, out);
 }
 
-const RE2& AttrListPrefixRE() {
-  static RE2 pattern("list\\s*\\(\\s*");
-  return pattern;
+bool ConsumeListPrefix(StringPiece* sp) {
+  return Scanner(*sp)
+      .OneLiteral("list")
+      .AnySpace()
+      .OneLiteral("(")
+      .AnySpace()
+      .GetResult(sp);
 }
 
-const RE2& SpacesRE() {
-  static RE2 pattern("\\s*");
-  return pattern;
+bool ConsumeQuotedString(char quote_ch, StringPiece* sp, StringPiece* out) {
+  const string quote_str(1, quote_ch);
+  return Scanner(*sp)
+      .OneLiteral(quote_str.c_str())
+      .RestartCapture()
+      .ScanEscapedUntil(quote_ch)
+      .StopCapture()
+      .OneLiteral(quote_str.c_str())
+      .AnySpace()
+      .GetResult(sp, out);
 }
 
-const RE2& AttrDoubleQuotedRE() {
-  static RE2 pattern(R"xx("((?:[^"\\]|\\.)*)"\s*)xx");
-  return pattern;
+bool ConsumeAttrType(StringPiece* sp, StringPiece* out) {
+  return Scanner(*sp)
+      .Many(Scanner::LOWERLETTER_DIGIT)
+      .StopCapture()
+      .AnySpace()
+      .GetResult(sp, out);
 }
 
-const RE2& AttrSingleQuotedRE() {
-  static RE2 pattern(R"xx('((?:[^'\\]|\\.)*)'\s*)xx");
-  return pattern;
-}
+bool ConsumeAttrNumber(StringPiece* sp, int64* out) {
+  Scanner scan(*sp);
+  StringPiece match;
+  StringPiece remaining;
 
-const RE2& AttrTypeRE() {
-  static RE2 pattern("([a-z0-9]+)\\s*");
-  return pattern;
-}
-
-const RE2& AttrNumberRE() {
-  static RE2 pattern("\\s*(-?\\d+)\\s*");
-  return pattern;
+  scan.AnySpace().RestartCapture();
+  if (scan.Peek() == '-') {
+    scan.OneLiteral("-");
+  }
+  if (!scan.Many(Scanner::DIGIT)
+           .StopCapture()
+           .AnySpace()
+           .GetResult(&remaining, &match)) {
+    return false;
+  }
+  int64 value = 0;
+  if (!strings::safe_strto64(match, &value)) {
+    return false;
+  }
+  *out = value;
+  *sp = remaining;
+  return true;
 }
 
 #define VERIFY(expr, ...)                                                 \
@@ -99,6 +112,39 @@ const RE2& AttrNumberRE() {
     }                                                                     \
   } while (false)
 
+bool ConsumeCompoundAttrType(StringPiece* sp, StringPiece* out) {
+  auto capture_begin = sp->begin();
+  if (absl::ConsumePrefix(sp, "numbertype") ||
+      absl::ConsumePrefix(sp, "numerictype") ||
+      absl::ConsumePrefix(sp, "quantizedtype") ||
+      absl::ConsumePrefix(sp, "realnumbertype") ||
+      absl::ConsumePrefix(sp, "realnumberictype")) {
+    *out = StringPiece(capture_begin, sp->begin() - capture_begin);
+    return true;
+  }
+  return false;
+}
+
+bool ProcessCompoundType(const StringPiece type_string, AttrValue* allowed) {
+  if (type_string == "numbertype" || type_string == "numerictype") {
+    for (DataType dt : NumberTypes()) {
+      allowed->mutable_list()->add_type(dt);
+    }
+  } else if (type_string == "quantizedtype") {
+    for (DataType dt : QuantizedTypes()) {
+      allowed->mutable_list()->add_type(dt);
+    }
+  } else if (type_string == "realnumbertype" ||
+             type_string == "realnumerictype") {
+    for (DataType dt : RealNumberTypes()) {
+      allowed->mutable_list()->add_type(dt);
+    }
+  } else {
+    return false;
+  }
+  return true;
+}
+
 void FinalizeAttr(StringPiece spec, OpDef* op_def,
                   std::vector<string>* errors) {
   OpDef::AttrDef* attr = op_def->add_attr();
@@ -106,112 +152,104 @@ void FinalizeAttr(StringPiece spec, OpDef* op_def,
 
   // Parse "<name>:" at the beginning.
   StringPiece tmp_name;
-  VERIFY(RE2Consume(&spec, AttrNameRE(), &tmp_name),
-         "Trouble parsing '<name>:'");
+  VERIFY(ConsumeAttrName(&spec, &tmp_name), "Trouble parsing '<name>:'");
   attr->set_name(tmp_name.data(), tmp_name.size());
 
   // Read "<type>" or "list(<type>)".
-  bool is_list = RE2Consume(&spec, AttrListPrefixRE());
+  bool is_list = ConsumeListPrefix(&spec);
   string type;
-  if (spec.Consume("string")) {
+  StringPiece type_string;  // Used if type == "type"
+  if (absl::ConsumePrefix(&spec, "string")) {
     type = "string";
-  } else if (spec.Consume("int")) {
+  } else if (absl::ConsumePrefix(&spec, "int")) {
     type = "int";
-  } else if (spec.Consume("float")) {
+  } else if (absl::ConsumePrefix(&spec, "float")) {
     type = "float";
-  } else if (spec.Consume("bool")) {
+  } else if (absl::ConsumePrefix(&spec, "bool")) {
     type = "bool";
-  } else if (spec.Consume("type")) {
+  } else if (absl::ConsumePrefix(&spec, "type")) {
     type = "type";
-  } else if (spec.Consume("shape")) {
+  } else if (absl::ConsumePrefix(&spec, "shape")) {
     type = "shape";
-  } else if (spec.Consume("tensor")) {
+  } else if (absl::ConsumePrefix(&spec, "tensor")) {
     type = "tensor";
-  } else if (spec.Consume("func")) {
+  } else if (absl::ConsumePrefix(&spec, "func")) {
     type = "func";
-  } else if (spec.Consume("numbertype") || spec.Consume("numerictype")) {
+  } else if (ConsumeCompoundAttrType(&spec, &type_string)) {
     type = "type";
     AttrValue* allowed = attr->mutable_allowed_values();
-    for (DataType dt : NumberTypes()) {
-      allowed->mutable_list()->add_type(dt);
-    }
-  } else if (spec.Consume("quantizedtype")) {
-    type = "type";
-    AttrValue* allowed = attr->mutable_allowed_values();
-    for (DataType dt : QuantizedTypes()) {
-      allowed->mutable_list()->add_type(dt);
-    }
-  } else if (spec.Consume("realnumbertype") ||
-             spec.Consume("realnumerictype")) {
-    type = "type";
-    AttrValue* allowed = attr->mutable_allowed_values();
-    for (DataType dt : RealNumberTypes()) {
-      allowed->mutable_list()->add_type(dt);
-    }
-  } else if (spec.Consume("{")) {
+    VERIFY(ProcessCompoundType(type_string, allowed),
+           "Expected to see a compound type, saw: ", type_string);
+  } else if (absl::ConsumePrefix(&spec, "{")) {
     // e.g. "{ int32, float, bool }" or "{ \"foo\", \"bar\" }"
-    RE2Consume(&spec, SpacesRE());
     AttrValue* allowed = attr->mutable_allowed_values();
-    if (spec.starts_with("\"") || spec.starts_with("'")) {
+    str_util::RemoveLeadingWhitespace(&spec);
+    if (absl::StartsWith(spec, "\"") || absl::StartsWith(spec, "'")) {
       type = "string";  // "{ \"foo\", \"bar\" }" or "{ 'foo', 'bar' }"
       while (true) {
         StringPiece escaped_string;
-        VERIFY((RE2Consume(&spec, AttrDoubleQuotedRE(), &escaped_string) ||
-                RE2Consume(&spec, AttrSingleQuotedRE(), &escaped_string)),
+        VERIFY(ConsumeQuotedString('"', &spec, &escaped_string) ||
+                   ConsumeQuotedString('\'', &spec, &escaped_string),
                "Trouble parsing allowed string at '", spec, "'");
         string unescaped;
         string error;
-        VERIFY(str_util::CUnescape(escaped_string, &unescaped, &error),
-               "Trouble unescaping \"", escaped_string, "\", got error: ",
-               error);
+        VERIFY(absl::CUnescape(escaped_string, &unescaped, &error),
+               "Trouble unescaping \"", escaped_string,
+               "\", got error: ", error);
         allowed->mutable_list()->add_s(unescaped);
-        if (spec.Consume(",")) {
-          RE2Consume(&spec, SpacesRE());
-          if (spec.Consume("}")) break;  // Allow ending with ", }".
+        if (absl::ConsumePrefix(&spec, ",")) {
+          str_util::RemoveLeadingWhitespace(&spec);
+          if (absl::ConsumePrefix(&spec, "}"))
+            break;  // Allow ending with ", }".
         } else {
-          VERIFY(spec.Consume("}"),
+          VERIFY(absl::ConsumePrefix(&spec, "}"),
                  "Expected , or } after strings in list, not: '", spec, "'");
           break;
         }
       }
-    } else {  // "{ int32, float, bool }"
+    } else {  // "{ bool, numbertype, string }"
       type = "type";
       while (true) {
-        StringPiece type_string;
-        VERIFY(RE2Consume(&spec, AttrTypeRE(), &type_string),
+        VERIFY(ConsumeAttrType(&spec, &type_string),
                "Trouble parsing type string at '", spec, "'");
-        DataType dt;
-        VERIFY(DataTypeFromString(type_string, &dt),
-               "Unrecognized type string '", type_string, "'");
-        allowed->mutable_list()->add_type(dt);
-        if (spec.Consume(",")) {
-          RE2Consume(&spec, SpacesRE());
-          if (spec.Consume("}")) break;  // Allow ending with ", }".
+        if (ProcessCompoundType(type_string, allowed)) {
+          // Processed a compound type.
         } else {
-          VERIFY(spec.Consume("}"),
+          DataType dt;
+          VERIFY(DataTypeFromString(type_string, &dt),
+                 "Unrecognized type string '", type_string, "'");
+          allowed->mutable_list()->add_type(dt);
+        }
+        if (absl::ConsumePrefix(&spec, ",")) {
+          str_util::RemoveLeadingWhitespace(&spec);
+          if (absl::ConsumePrefix(&spec, "}"))
+            break;  // Allow ending with ", }".
+        } else {
+          VERIFY(absl::ConsumePrefix(&spec, "}"),
                  "Expected , or } after types in list, not: '", spec, "'");
           break;
         }
       }
     }
-  } else {
+  } else {  // if spec.Consume("{")
     VERIFY(false, "Trouble parsing type string at '", spec, "'");
   }
-  RE2Consume(&spec, SpacesRE());
+  str_util::RemoveLeadingWhitespace(&spec);
 
   // Write the type into *attr.
   if (is_list) {
-    VERIFY(spec.Consume(")"), "Expected ) to close 'list(', not: '", spec, "'");
-    RE2Consume(&spec, SpacesRE());
+    VERIFY(absl::ConsumePrefix(&spec, ")"),
+           "Expected ) to close 'list(', not: '", spec, "'");
+    str_util::RemoveLeadingWhitespace(&spec);
     attr->set_type(strings::StrCat("list(", type, ")"));
   } else {
     attr->set_type(type);
   }
 
   // Read optional minimum constraint at the end.
-  if ((is_list || type == "int") && spec.Consume(">=")) {
+  if ((is_list || type == "int") && absl::ConsumePrefix(&spec, ">=")) {
     int64 min_limit = -999;
-    VERIFY(RE2Consume(&spec, AttrNumberRE(), &min_limit),
+    VERIFY(ConsumeAttrNumber(&spec, &min_limit),
            "Could not parse integer lower limit after '>=', found '", spec,
            "' instead");
     attr->set_has_minimum(true);
@@ -219,8 +257,8 @@ void FinalizeAttr(StringPiece spec, OpDef* op_def,
   }
 
   // Parse default value, if present.
-  if (spec.Consume("=")) {
-    RE2Consume(&spec, SpacesRE());
+  if (absl::ConsumePrefix(&spec, "=")) {
+    str_util::RemoveLeadingWhitespace(&spec);
     VERIFY(ParseAttrValue(attr->type(), spec, attr->mutable_default_value()),
            "Could not parse default value '", spec, "'");
   } else {
@@ -235,29 +273,57 @@ string InOutError(bool is_output, StringPiece orig, const string& op_name) {
                          "\") for Op ", op_name);
 }
 
-const RE2& InOutNameRE() {
-  static RE2 pattern("([a-z][a-z0-9_]*)\\s*:\\s*");
-  return pattern;
+bool ConsumeInOutName(StringPiece* sp, StringPiece* out) {
+  return Scanner(*sp)
+      .One(Scanner::LOWERLETTER)
+      .Any(Scanner::LOWERLETTER_DIGIT_UNDERSCORE)
+      .StopCapture()
+      .AnySpace()
+      .OneLiteral(":")
+      .AnySpace()
+      .GetResult(sp, out);
 }
 
-const RE2& InOutRefOpenRE() {
-  static RE2 pattern("Ref\\s*\\(\\s*");
-  return pattern;
+bool ConsumeInOutRefOpen(StringPiece* sp) {
+  return Scanner(*sp)
+      .OneLiteral("Ref")
+      .AnySpace()
+      .OneLiteral("(")
+      .AnySpace()
+      .GetResult(sp);
 }
 
-const RE2& InOutRefCloseRE() {
-  static RE2 pattern("\\)\\s*");
-  return pattern;
+bool ConsumeInOutRefClose(StringPiece* sp) {
+  return Scanner(*sp).OneLiteral(")").AnySpace().GetResult(sp);
 }
 
-const RE2& InOutNameOrTypeRE() {
-  static RE2 pattern("([a-zA-Z][a-zA-Z0-9_]*)\\s*");
-  return pattern;
+bool ConsumeInOutNameOrType(StringPiece* sp, StringPiece* out) {
+  return Scanner(*sp)
+      .One(Scanner::LETTER)
+      .Any(Scanner::LETTER_DIGIT_UNDERSCORE)
+      .StopCapture()
+      .AnySpace()
+      .GetResult(sp, out);
 }
 
-const RE2& InOutTimesTypeRE() {
-  static RE2 pattern("[*]\\s*([a-zA-Z][a-zA-Z0-9_]*)\\s*");
-  return pattern;
+bool ConsumeInOutTimesType(StringPiece* sp, StringPiece* out) {
+  return Scanner(*sp)
+      .OneLiteral("*")
+      .AnySpace()
+      .RestartCapture()
+      .One(Scanner::LETTER)
+      .Any(Scanner::LETTER_DIGIT_UNDERSCORE)
+      .StopCapture()
+      .AnySpace()
+      .GetResult(sp, out);
+}
+
+bool ConsumeControlOutName(StringPiece* sp, StringPiece* out) {
+  return Scanner(*sp)
+      .One(Scanner::LETTER)
+      .Any(Scanner::LETTER_DIGIT_UNDERSCORE)
+      .StopCapture()
+      .GetResult(sp, out);
 }
 
 #define VERIFY(expr, ...)                                             \
@@ -278,20 +344,19 @@ void FinalizeInputOrOutput(StringPiece spec, bool is_output, OpDef* op_def,
 
   // Parse "<name>:" at the beginning.
   StringPiece tmp_name;
-  VERIFY(RE2Consume(&spec, InOutNameRE(), &tmp_name),
-         "Trouble parsing 'name:'");
+  VERIFY(ConsumeInOutName(&spec, &tmp_name), "Trouble parsing 'name:'");
   arg->set_name(tmp_name.data(), tmp_name.size());
 
   // Detect "Ref(...)".
-  if (RE2Consume(&spec, InOutRefOpenRE())) {
+  if (ConsumeInOutRefOpen(&spec)) {
     arg->set_is_ref(true);
   }
 
   {  // Parse "<name|type>" or "<name>*<name|type>".
     StringPiece first, second, type_or_attr;
-    VERIFY(RE2Consume(&spec, InOutNameOrTypeRE(), &first),
+    VERIFY(ConsumeInOutNameOrType(&spec, &first),
            "Trouble parsing either a type or an attr name at '", spec, "'");
-    if (RE2Consume(&spec, InOutTimesTypeRE(), &second)) {
+    if (ConsumeInOutTimesType(&spec, &second)) {
       arg->set_number_attr(first.data(), first.size());
       type_or_attr = second;
     } else {
@@ -316,7 +381,7 @@ void FinalizeInputOrOutput(StringPiece spec, bool is_output, OpDef* op_def,
 
   // Closing ) for Ref(.
   if (arg->is_ref()) {
-    VERIFY(RE2Consume(&spec, InOutRefCloseRE()),
+    VERIFY(ConsumeInOutRefClose(&spec),
            "Did not find closing ')' for 'Ref(', instead found: '", spec, "'");
   }
 
@@ -341,9 +406,37 @@ void FinalizeInputOrOutput(StringPiece spec, bool is_output, OpDef* op_def,
       attr->set_minimum(1);
     }
   }
+
+  // If the arg's dtype is resource we should mark the op as stateful as it
+  // likely touches a resource manager. This deliberately doesn't cover inputs /
+  // outputs which resolve to resource via Attrs as those mostly operate on
+  // resource handles as an opaque type (as opposed to ops which explicitly take
+  // / produce resources).
+  if (arg->type() == DT_RESOURCE) {
+    op_def->set_is_stateful(true);
+  }
 }
 
 #undef VERIFY
+
+string ControlOutError(StringPiece orig, const string& op_name) {
+  return strings::StrCat(" from ControlOutput(\"", orig, "\") for Op ",
+                         op_name);
+}
+
+void FinalizeControlOutput(StringPiece name, OpDef* op_def,
+                           std::vector<string>* errors) {
+  StringPiece orig(name);
+
+  // Parse control output name.
+  StringPiece tmp_name;
+  if (!ConsumeControlOutName(&orig, &tmp_name)) {
+    errors->push_back(strings::StrCat("Trouble parsing 'name:'",
+                                      ControlOutError(orig, op_def->name())));
+  }
+
+  *op_def->add_control_output() = string(tmp_name.data(), tmp_name.size());
+}
 
 int num_leading_spaces(StringPiece s) {
   size_t i = 0;
@@ -353,14 +446,19 @@ int num_leading_spaces(StringPiece s) {
   return i;
 }
 
-const RE2& DocNameColonRE() {
-  static RE2 pattern("^[a-zA-Z][a-zA-Z0-9_]*\\s*:");
-  return pattern;
+bool ConsumeDocNameColon(StringPiece* sp, StringPiece* out) {
+  return Scanner(*sp)
+      .One(Scanner::LETTER)
+      .Any(Scanner::LETTER_DIGIT_UNDERSCORE)
+      .StopCapture()
+      .AnySpace()
+      .OneLiteral(":")
+      .AnySpace()
+      .GetResult(sp, out);
 }
 
-const RE2& DocNameColonSpacesRE() {
-  static RE2 pattern("([a-zA-Z][a-zA-Z0-9_]*)\\s*:\\s*");
-  return pattern;
+bool IsDocNameColon(StringPiece s) {
+  return ConsumeDocNameColon(&s, nullptr /* out */);
 }
 
 void FinalizeDoc(const string& text, OpDef* op_def,
@@ -369,7 +467,7 @@ void FinalizeDoc(const string& text, OpDef* op_def,
 
   // Remove trailing spaces.
   for (string& line : lines) {
-    str_util::StripTrailingWhitespace(&line);
+    absl::StripTrailingAsciiWhitespace(&line);
   }
 
   // First non-blank line -> summary.
@@ -383,14 +481,13 @@ void FinalizeDoc(const string& text, OpDef* op_def,
 
   // Lines until we see name: -> description.
   int start_l = l;
-  while (static_cast<size_t>(l) < lines.size() &&
-         !RE2::PartialMatch(lines[l], DocNameColonRE())) {
+  while (static_cast<size_t>(l) < lines.size() && !IsDocNameColon(lines[l])) {
     ++l;
   }
   int end_l = l;
   // Trim trailing blank lines from the description.
   while (start_l < end_l && lines[end_l - 1].empty()) --end_l;
-  string desc = str_util::Join(
+  string desc = absl::StrJoin(
       gtl::ArraySlice<string>(lines.data() + start_l, end_l - start_l), "\n");
   if (!desc.empty()) op_def->set_description(desc);
 
@@ -402,10 +499,9 @@ void FinalizeDoc(const string& text, OpDef* op_def,
   while (static_cast<size_t>(l) < lines.size()) {
     description.clear();
     description.push_back(lines[l]);
-    RE2Consume(&description.back(), DocNameColonSpacesRE(), &name);
+    ConsumeDocNameColon(&description.back(), &name);
     ++l;
-    while (static_cast<size_t>(l) < lines.size() &&
-           !RE2::PartialMatch(lines[l], DocNameColonRE())) {
+    while (static_cast<size_t>(l) < lines.size() && !IsDocNameColon(lines[l])) {
       description.push_back(lines[l]);
       ++l;
     }
@@ -426,7 +522,7 @@ void FinalizeDoc(const string& text, OpDef* op_def,
       if (!description[i].empty()) description[i].remove_prefix(min_indent);
     }
     // Concatenate lines into a single string.
-    const string complete(str_util::Join(description, "\n"));
+    const string complete(absl::StrJoin(description, "\n"));
 
     // Find name.
     bool found = false;
@@ -459,59 +555,89 @@ void FinalizeDoc(const string& text, OpDef* op_def,
 
 }  // namespace
 
-OpDefBuilder::OpDefBuilder(StringPiece op_name) {
-  op_def_.set_name(op_name.ToString());  // NOLINT
+OpDefBuilder::OpDefBuilder(string op_name) {
+  op_def()->set_name(std::move(op_name));
 }
 
-OpDefBuilder& OpDefBuilder::Attr(StringPiece spec) {
-  attrs_.emplace_back(spec.data(), spec.size());
+OpDefBuilder& OpDefBuilder::Attr(string spec) {
+  attrs_.push_back(std::move(spec));
   return *this;
 }
 
-OpDefBuilder& OpDefBuilder::Input(StringPiece spec) {
-  inputs_.emplace_back(spec.data(), spec.size());
+OpDefBuilder& OpDefBuilder::Input(string spec) {
+  inputs_.push_back(std::move(spec));
   return *this;
 }
 
-OpDefBuilder& OpDefBuilder::Output(StringPiece spec) {
-  outputs_.emplace_back(spec.data(), spec.size());
+OpDefBuilder& OpDefBuilder::Output(string spec) {
+  outputs_.push_back(std::move(spec));
   return *this;
 }
 
-OpDefBuilder& OpDefBuilder::Doc(StringPiece text) {
+OpDefBuilder& OpDefBuilder::ControlOutput(string name) {
+  control_outputs_.push_back(std::move(name));
+  return *this;
+}
+
+#ifndef TF_LEAN_BINARY
+OpDefBuilder& OpDefBuilder::Doc(string text) {
   if (!doc_.empty()) {
     errors_.push_back(
-        strings::StrCat("Extra call to Doc() for Op ", op_def_.name()));
+        strings::StrCat("Extra call to Doc() for Op ", op_def()->name()));
   } else {
-    doc_.assign(text.data(), text.size());
+    doc_ = std::move(text);
   }
   return *this;
 }
+#endif
 
 OpDefBuilder& OpDefBuilder::SetIsCommutative() {
-  op_def_.set_is_commutative(true);
+  op_def()->set_is_commutative(true);
   return *this;
 }
 
 OpDefBuilder& OpDefBuilder::SetIsAggregate() {
-  op_def_.set_is_aggregate(true);
+  op_def()->set_is_aggregate(true);
   return *this;
 }
 
 OpDefBuilder& OpDefBuilder::SetIsStateful() {
-  op_def_.set_is_stateful(true);
+  op_def()->set_is_stateful(true);
   return *this;
 }
 
 OpDefBuilder& OpDefBuilder::SetAllowsUninitializedInput() {
-  op_def_.set_allows_uninitialized_input(true);
+  op_def()->set_allows_uninitialized_input(true);
   return *this;
 }
 
-Status OpDefBuilder::Finalize(OpDef* op_def) const {
-  std::vector<string> errors = errors_;
-  *op_def = op_def_;
+OpDefBuilder& OpDefBuilder::Deprecated(int version, string explanation) {
+  if (op_def()->has_deprecation()) {
+    errors_.push_back(
+        strings::StrCat("Deprecated called twice for Op ", op_def()->name()));
+  } else {
+    OpDeprecation* deprecation = op_def()->mutable_deprecation();
+    deprecation->set_version(version);
+    deprecation->set_explanation(std::move(explanation));
+  }
+  return *this;
+}
 
+OpDefBuilder& OpDefBuilder::SetShapeFn(OpShapeInferenceFn fn) {
+  if (op_reg_data_.shape_inference_fn != nullptr) {
+    errors_.push_back(
+        strings::StrCat("SetShapeFn called twice for Op ", op_def()->name()));
+  } else {
+    op_reg_data_.shape_inference_fn = OpShapeInferenceFn(fn);
+  }
+  return *this;
+}
+
+Status OpDefBuilder::Finalize(OpRegistrationData* op_reg_data) const {
+  std::vector<string> errors = errors_;
+  *op_reg_data = op_reg_data_;
+
+  OpDef* op_def = &op_reg_data->op_def;
   for (StringPiece attr : attrs_) {
     FinalizeAttr(attr, op_def, &errors);
   }
@@ -521,10 +647,13 @@ Status OpDefBuilder::Finalize(OpDef* op_def) const {
   for (StringPiece output : outputs_) {
     FinalizeInputOrOutput(output, true, op_def, &errors);
   }
+  for (StringPiece control_output : control_outputs_) {
+    FinalizeControlOutput(control_output, op_def, &errors);
+  }
   FinalizeDoc(doc_, op_def, &errors);
 
   if (errors.empty()) return Status::OK();
-  return errors::InvalidArgument(str_util::Join(errors, "\n"));
+  return errors::InvalidArgument(absl::StrJoin(errors, "\n"));
 }
 
 }  // namespace tensorflow

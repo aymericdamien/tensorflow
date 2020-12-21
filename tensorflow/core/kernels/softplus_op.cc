@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,13 +17,13 @@ limitations under the License.
 
 #define EIGEN_USE_THREADS
 
-#include "tensorflow/core/framework/numeric_op.h"
+#include "tensorflow/core/kernels/softplus_op.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "tensorflow/core/framework/numeric_op.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
-#include "tensorflow/core/kernels/softplus_op.h"
+#include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/lib/core/errors.h"
-#include "tensorflow/core/public/tensor.h"
 
 namespace tensorflow {
 
@@ -33,7 +33,8 @@ typedef Eigen::GpuDevice GPUDevice;
 template <typename Device, typename T>
 class SoftplusOp : public UnaryElementWiseOp<T, SoftplusOp<Device, T>> {
  public:
-  using UnaryElementWiseOp<T, SoftplusOp<Device, T>>::UnaryElementWiseOp;
+  explicit SoftplusOp(OpKernelConstruction* context)
+      : UnaryElementWiseOp<T, SoftplusOp<Device, T>>(context) {}
 
   void Operate(OpKernelContext* context, const Tensor& input, Tensor* output) {
     functor::Softplus<Device, T> functor;
@@ -46,7 +47,11 @@ template <typename Device, typename T>
 class SoftplusGradOp
     : public BinaryElementWiseOp<T, SoftplusGradOp<Device, T>> {
  public:
-  using BinaryElementWiseOp<T, SoftplusGradOp<Device, T>>::BinaryElementWiseOp;
+  explicit SoftplusGradOp(OpKernelConstruction* context)
+      : BinaryElementWiseOp<T, SoftplusGradOp<Device, T>>(context) {}
+
+  void OperateNoTemplate(OpKernelContext* context, const Tensor& g,
+                         const Tensor& a, Tensor* output);
 
   // INPUTS:
   //   g (gradients): backpropagated gradients
@@ -56,13 +61,20 @@ class SoftplusGradOp
   template <int NDIMS>
   void Operate(OpKernelContext* context, const Tensor& g, const Tensor& a,
                Tensor* output) {
-    OP_REQUIRES(context, a.IsSameSize(g),
-                errors::InvalidArgument("g and a must be the same size"));
-    functor::SoftplusGrad<Device, T> functor;
-    functor(context->eigen_device<Device>(), g.flat<T>(), a.flat<T>(),
-            output->flat<T>());
+    OperateNoTemplate(context, g, a, output);
   }
 };
+template <typename Device, typename T>
+void SoftplusGradOp<Device, T>::OperateNoTemplate(OpKernelContext* context,
+                                                  const Tensor& g,
+                                                  const Tensor& a,
+                                                  Tensor* output) {
+  OP_REQUIRES(context, a.IsSameSize(g),
+              errors::InvalidArgument("g and a must be the same size"));
+  functor::SoftplusGrad<Device, T> functor;
+  functor(context->eigen_device<Device>(), g.flat<T>(), a.flat<T>(),
+          output->flat<T>());
+}
 
 #define REGISTER_KERNELS(type)                                           \
   REGISTER_KERNEL_BUILDER(                                               \
@@ -72,10 +84,11 @@ class SoftplusGradOp
       Name("SoftplusGrad").Device(DEVICE_CPU).TypeConstraint<type>("T"), \
       SoftplusGradOp<CPUDevice, type>);
 
-TF_CALL_REAL_NUMBER_TYPES(REGISTER_KERNELS);
+TF_CALL_FLOAT_TYPES(REGISTER_KERNELS);
 #undef REGISTER_KERNELS
 
-#if GOOGLE_CUDA
+#if (defined(GOOGLE_CUDA) && GOOGLE_CUDA) || \
+    (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
 // Forward declarations of the functor specializations for GPU.
 namespace functor {
 #define DECLARE_GPU_SPEC(T)                                          \
@@ -107,6 +120,6 @@ TF_CALL_GPU_NUMBER_TYPES(DECLARE_GPU_SPEC);
 TF_CALL_GPU_NUMBER_TYPES(REGISTER_GPU_KERNELS);
 #undef REGISTER_GPU_KERNELS
 
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 }  // namespace tensorflow

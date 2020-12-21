@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,9 +15,8 @@ limitations under the License.
 
 #include "tensorflow/core/framework/op_segment.h"
 
-#include <gtest/gtest.h>
+#include <vector>
 #include "tensorflow/core/framework/allocator.h"
-#include "tensorflow/core/framework/graph.pb.h"
 #include "tensorflow/core/framework/node_def_builder.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/kernels/ops_util.h"
@@ -25,6 +24,7 @@ limitations under the License.
 #include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/lib/strings/strcat.h"
 #include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/platform/test.h"
 #include "tensorflow/core/public/version.h"
 
 namespace tensorflow {
@@ -36,7 +36,6 @@ class OpSegmentTest : public ::testing::Test {
   std::vector<NodeDef> float_nodedefs_;
 
   OpSegmentTest() : device_(Env::Default()) {
-    RequireDefaultOps();
     for (int i = 0; i < 10; ++i) {
       NodeDef def;
       TF_CHECK_OK(NodeDefBuilder(strings::StrCat("op", i), "Mul")
@@ -84,12 +83,12 @@ TEST_F(OpSegmentTest, Basic) {
   for (int i = 0; i < 10; ++i) {
     // Register in session A.
     auto* ndef = &float_nodedefs_[i];
-    EXPECT_OK(opseg.FindOrCreate("A", ndef->name(), &op, GetFn(ndef)));
+    TF_EXPECT_OK(opseg.FindOrCreate("A", ndef->name(), &op, GetFn(ndef)));
     ValidateOpAndTypes(op, *ndef, DT_FLOAT);
 
     // Register in session B.
     ndef = &int32_nodedefs_[i];
-    EXPECT_OK(opseg.FindOrCreate("B", ndef->name(), &op, GetFn(ndef)));
+    TF_EXPECT_OK(opseg.FindOrCreate("B", ndef->name(), &op, GetFn(ndef)));
     ValidateOpAndTypes(op, *ndef, DT_INT32);
   }
 
@@ -98,11 +97,13 @@ TEST_F(OpSegmentTest, Basic) {
   };
   for (int i = 0; i < 10; ++i) {
     // Lookup op in session A.
-    EXPECT_OK(opseg.FindOrCreate("A", strings::StrCat("op", i), &op, reterr));
+    TF_EXPECT_OK(
+        opseg.FindOrCreate("A", strings::StrCat("op", i), &op, reterr));
     ValidateOpAndTypes(op, float_nodedefs_[i], DT_FLOAT);
 
     // Lookup op in session B.
-    EXPECT_OK(opseg.FindOrCreate("B", strings::StrCat("op", i), &op, reterr));
+    TF_EXPECT_OK(
+        opseg.FindOrCreate("B", strings::StrCat("op", i), &op, reterr));
     ValidateOpAndTypes(op, int32_nodedefs_[i], DT_INT32);
   }
 
@@ -139,7 +140,7 @@ TEST_F(OpSegmentTest, AddRemoveHolds) {
 
   // Thread1 register the op and wants to ensure it alive.
   opseg.AddHold("foo");
-  EXPECT_OK(opseg.FindOrCreate("foo", ndef.name(), &op, GetFn(&ndef)));
+  TF_EXPECT_OK(opseg.FindOrCreate("foo", ndef.name(), &op, GetFn(&ndef)));
 
   // Thread2 starts some execution needs "op" to be alive.
   opseg.AddHold("foo");

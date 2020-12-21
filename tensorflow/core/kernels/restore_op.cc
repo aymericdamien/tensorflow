@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 // See docs in ../ops/io_ops.cc.
-#include "tensorflow/core/kernels/io.h"
+#include "tensorflow/core/kernels/save_restore_tensor.h"
 
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/lib/core/errors.h"
@@ -41,7 +41,7 @@ class RestoreOp : public OpKernel {
   }
   void Compute(OpKernelContext* context) override {
     RestoreTensor(context, &checkpoint::OpenTableTensorSliceReader,
-                  preferred_shard_, false);
+                  preferred_shard_, false, 0);
   }
 
  private:
@@ -67,7 +67,7 @@ class RestoreSliceOp : public OpKernel {
   }
   void Compute(OpKernelContext* context) override {
     RestoreTensor(context, &checkpoint::OpenTableTensorSliceReader,
-                  preferred_shard_, true);
+                  preferred_shard_, true, 0);
   }
 
  private:

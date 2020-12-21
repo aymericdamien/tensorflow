@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,14 +15,13 @@ limitations under the License.
 
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "tensorflow/core/kernels/range_sampler.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/lib/io/path.h"
 #include "tensorflow/core/lib/random/simple_philox.h"
+#include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/test.h"
-#include "tensorflow/core/public/env.h"
 
 namespace tensorflow {
 namespace {
@@ -46,7 +45,7 @@ class RangeSamplerTest : public ::testing::Test {
     // Using a fixed random seed to make the test deterministic.
     random::PhiloxRandom philox(123, 17);
     random::SimplePhilox rnd(&philox);
-    sampler_->SampleBatch(&rnd, false, &a);
+    sampler_->SampleBatch(&rnd, false, absl::MakeSpan(a));
     for (int i = 0; i < num_samples; i++) {
       int64 val = a[i];
       ASSERT_GE(val, 0);
@@ -67,7 +66,7 @@ class RangeSamplerTest : public ::testing::Test {
     sampler_->Update(a);
   }
   void Update2() {
-    // Add the value n n times.
+    // Add the value n times.
     int64 a[10];
     for (int i = 0; i < 10; i++) {
       a[i] = i;
@@ -252,8 +251,9 @@ TEST_F(RangeSamplerTest, All) {
   extras[0] = 0;
   extras[1] = batch_size - 1;
   sampler_->SampleBatchGetExpectedCount(nullptr,  // no random numbers needed
-                                        false, &batch, &batch_expected, extras,
-                                        &extras_expected);
+                                        false, absl::MakeSpan(batch),
+                                        absl::MakeSpan(batch_expected), extras,
+                                        absl::MakeSpan(extras_expected));
   for (int i = 0; i < batch_size; i++) {
     EXPECT_EQ(i, batch[i]);
     EXPECT_EQ(1, batch_expected[i]);
@@ -282,17 +282,18 @@ TEST_F(RangeSamplerTest, Unique) {
   std::vector<float> expected(range);
 
   // Sample one batch and get the expected counts of all values
-  sampler_->SampleBatchGetExpectedCount(
-      &rnd, true, &batch, MutableArraySlice<float>(), all_values, &expected);
+  sampler_->SampleBatchGetExpectedCount(&rnd, true, absl::MakeSpan(batch),
+                                        MutableArraySlice<float>(), all_values,
+                                        absl::MakeSpan(expected));
   // Check that all elements are unique
   std::set<int64> s(batch.begin(), batch.end());
   CHECK_EQ(batch_size, s.size());
 
   for (int trial = 0; trial < num_batches; trial++) {
     std::vector<float> trial_expected(range);
-    sampler_->SampleBatchGetExpectedCount(&rnd, true, &batch,
-                                          MutableArraySlice<float>(),
-                                          all_values, &trial_expected);
+    sampler_->SampleBatchGetExpectedCount(
+        &rnd, true, absl::MakeSpan(batch), MutableArraySlice<float>(),
+        all_values, absl::MakeSpan(trial_expected));
     for (int i = 0; i < range; i++) {
       EXPECT_NEAR(expected[i], trial_expected[i], expected[i] * 0.5);
     }
@@ -319,8 +320,8 @@ TEST_F(RangeSamplerTest, Avoid) {
 
   // We expect to pick all elements of [0, 100) except the avoided two.
   sampler_->SampleBatchGetExpectedCountAvoid(
-      &rnd, true, &batch, MutableArraySlice<float>(), ArraySlice<int64>(),
-      MutableArraySlice<float>(), avoided);
+      &rnd, true, absl::MakeSpan(batch), MutableArraySlice<float>(),
+      ArraySlice<int64>(), MutableArraySlice<float>(), avoided);
 
   int sum = 0;
   for (auto val : batch) {

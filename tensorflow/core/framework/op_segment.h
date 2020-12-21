@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,9 +20,11 @@ limitations under the License.
 #include <unordered_map>
 
 #include "tensorflow/core/framework/op_kernel.h"
-#include "tensorflow/core/platform/port.h"
+#include "tensorflow/core/lib/core/status.h"
+#include "tensorflow/core/platform/macros.h"
+#include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/thread_annotations.h"
-#include "tensorflow/core/public/status.h"
+#include "tensorflow/core/platform/types.h"
 
 namespace tensorflow {
 
@@ -58,6 +60,10 @@ class OpSegment {
   Status FindOrCreate(const string& session_handle, const string& node_name,
                       OpKernel** kernel, CreateKernelFn create_fn);
 
+  // Returns true if OpSegment should own the kernel.
+  static bool ShouldOwnKernel(FunctionLibraryRuntime* lib,
+                              const string& node_op);
+
  private:
   // op name -> OpKernel
   typedef std::unordered_map<string, OpKernel*> KernelMap;
@@ -72,7 +78,7 @@ class OpSegment {
   typedef std::unordered_map<string, Item*> SessionMap;
 
   mutable mutex mu_;
-  SessionMap sessions_ GUARDED_BY(mu_);
+  SessionMap sessions_ TF_GUARDED_BY(mu_);
 
   TF_DISALLOW_COPY_AND_ASSIGN(OpSegment);
 };

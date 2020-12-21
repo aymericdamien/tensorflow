@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,15 +13,29 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_PLATFORM_LOGGING_H_
-#define TENSORFLOW_PLATFORM_LOGGING_H_
+#ifndef TENSORFLOW_CORE_PLATFORM_LOGGING_H_
+#define TENSORFLOW_CORE_PLATFORM_LOGGING_H_
 
-#include "tensorflow/core/platform/port.h"  // To pick up PLATFORM_define
+#include "tensorflow/core/platform/platform.h"  // To pick up PLATFORM_define
+#include "tensorflow/core/platform/types.h"
 
-#if defined(PLATFORM_GOOGLE) || defined(PLATFORM_GOOGLE_ANDROID)
-#include "base/logging.h"
+#if defined(PLATFORM_GOOGLE) || defined(PLATFORM_GOOGLE_ANDROID) || \
+    defined(PLATFORM_GOOGLE_IOS) || defined(GOOGLE_LOGGING) ||      \
+    defined(__EMSCRIPTEN__)
+#include "tensorflow/core/platform/google/logging.h"  // IWYU pragma: export
 #else
-#include "tensorflow/core/platform/default/logging.h"
+#include "tensorflow/core/platform/default/logging.h"  // IWYU pragma: export
 #endif
 
-#endif  // TENSORFLOW_PLATFORM_LOGGING_H_
+namespace tensorflow {
+
+namespace internal {
+// Emit "message" as a log message to the log for the specified
+// "severity" as if it came from a LOG call at "fname:line"
+void LogString(const char* fname, int line, int severity,
+               const std::string& message);
+}  // namespace internal
+
+}  // namespace tensorflow
+
+#endif  // TENSORFLOW_CORE_PLATFORM_LOGGING_H_
